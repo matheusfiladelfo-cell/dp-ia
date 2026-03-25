@@ -38,25 +38,20 @@ if st.button("Enviar"):
 
     with st.spinner("Analisando caso..."):
 
-        # HISTÓRICO
         sessao.adicionar("user", texto_usuario)
 
         contexto = sessao.gerar_contexto_llm()
 
-        # 🔥 ANALISAR SOMENTE TEXTO ATUAL (CORREÇÃO CRÍTICA)
         dados = analisar_texto_usuario(texto_usuario)
-
         sessao.atualizar_dados(dados)
 
         dados_consolidados = sessao.obter_dados()
 
-        # 🔥 MOTOR AGORA É AUXILIAR (NÃO DECIDE MAIS SOZINHO)
         resultado = analisar_caso(
             dados_consolidados.get("tipo_caso"),
             dados_consolidados
         )
 
-        # 🔥 IA AGORA É O CÉREBRO PRINCIPAL
         parecer = gerar_parecer_juridico(
             contexto=contexto,
             dados=dados_consolidados,
@@ -66,22 +61,36 @@ if st.button("Enviar"):
         sessao.adicionar("assistant", str(parecer))
 
     # =========================
-    # OUTPUT (PROFISSIONAL)
+    # OUTPUT PROFISSIONAL
     # =========================
 
     st.markdown("## 📊 Resultado da análise")
 
-    # 🔥 RISCO VEM DA IA (NÃO MAIS DO MOTOR)
     st.markdown(f"### ⚠ RISCO: {parecer.get('risco', 'N/A')}")
 
     st.markdown("---")
 
-    st.subheader("Consultoria trabalhista")
+    # 🔥 DIAGNÓSTICO
+    st.subheader("🧠 O que está acontecendo")
+    st.write(parecer.get("diagnostico", ""))
 
-    st.markdown(f"📊 **DIAGNÓSTICO:**\n{parecer.get('diagnostico', '')}")
-    st.markdown(f"\n⚠ **RISCO:**\n{parecer.get('risco', '')}")
-    st.markdown(f"\n📚 **FUNDAMENTAÇÃO LEGAL:**\n{parecer.get('fundamentacao', '')}")
-    st.markdown(f"\n✅ **RECOMENDAÇÃO:**\n{parecer.get('recomendacao', '')}")
+    # 🔥 MOTIVO DO RISCO
+    st.subheader("⚠ Por que isso é risco")
+    st.write(parecer.get("motivo_risco", ""))
+
+    # 🔥 BASE LEGAL (FIXA + IA)
+    st.subheader("⚖️ Base legal")
+    st.write("""
+A CLT (art. 7º da Constituição e art. 59 da CLT) exige pagamento de horas extras com adicional mínimo de 50%.
+A Justiça do Trabalho reconhece reflexos em férias, 13º, FGTS e DSR quando as horas são habituais.
+Também pode aplicar o piso da categoria, aumentando o valor da condenação.
+""")
+
+    # 🔥 AÇÕES
+    st.subheader("✅ O que fazer agora")
+
+    for acao in parecer.get("o_que_fazer", []):
+        st.write(f"✔ {acao}")
 
     # =========================
     # PERGUNTAS
