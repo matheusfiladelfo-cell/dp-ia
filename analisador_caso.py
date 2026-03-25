@@ -26,15 +26,9 @@ def analisar_texto_usuario(texto):
 
     resultado = {}
 
-    # =====================================================
-    # CLASSIFICAÇÃO POR REGRA (PRIORIDADE)
-    # =====================================================
-
-    tipo_regra = classificar_por_regra(texto)
-
-    # =====================================================
-    # EXTRAÇÃO BASE (REGRAS)
-    # =====================================================
+    # =========================
+    # 1. REGRAS (PRIORIDADE)
+    # =========================
 
     resultado["dias_afastamento"] = extrair_dias_afastamento(texto)
     resultado["tipo_rescisao"] = identificar_tipo_rescisao(texto)
@@ -44,28 +38,47 @@ def analisar_texto_usuario(texto):
     estabilidade = detectar_estabilidades(texto)
     resultado.update(estabilidade)
 
-    # =====================================================
-    # IA (COMPLEMENTO)
-    # =====================================================
+    resultado["tipo_caso"] = classificar_por_regra(texto)
+
+    # =========================
+    # 2. IA (COMPLEMENTO)
+    # =========================
 
     dados_ia = analisar_texto_ia(texto)
+
+    # =========================
+    # 3. 🔥 MERGE INTELIGENTE
+    # =========================
 
     if isinstance(dados_ia, dict) and not dados_ia.get("erro"):
 
         for chave, valor in dados_ia.items():
 
-            if resultado.get(chave) in [None, False]:
-                resultado[chave] = valor
+            if valor in [None, ""]:
+                continue
+
+            # 🔥 REGRA SEMPRE GANHA
+            if resultado.get(chave) not in [None]:
+                continue
+
+            resultado[chave] = valor
 
     else:
         resultado["erro_ia"] = dados_ia
 
-    # 🔥 PRIORIDADE FINAL DA CLASSIFICAÇÃO
-    resultado["tipo_caso"] = tipo_regra or resultado.get("tipo_caso")
+    # =========================
+    # 4. CONSISTÊNCIA
+    # =========================
 
-    # =====================================================
-    # PERGUNTAS
-    # =====================================================
+    if resultado.get("tipo_rescisao") == "demissao_sem_justa_causa":
+        resultado["justa_causa"] = False
+
+    if resultado.get("tipo_rescisao") == "justa_causa":
+        resultado["justa_causa"] = True
+
+    # =========================
+    # 5. PERGUNTAS
+    # =========================
 
     resultado["perguntas"] = gerar_perguntas(resultado)
 

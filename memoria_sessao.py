@@ -9,10 +9,17 @@ class MemoriaSessao:
 
         self.historico = []
 
+        # 🔥 AGORA COMPLETO
         self.dados = {
             "tipo_caso": None,
             "tipo_rescisao": None,
             "tempo_empresa_meses": None,
+            "dias_afastamento": None,
+
+            # 🔥 NOVOS CAMPOS (CRÍTICO)
+            "salario": None,
+            "horas_extras_semanais": None,
+
             "gestante": None,
             "cipa": None,
             "dirigente_sindical": None,
@@ -42,27 +49,24 @@ class MemoriaSessao:
         return contexto
 
     # =========================
-    # MEMÓRIA INTELIGENTE 🔥
+    # 🔥 MEMÓRIA CORRIGIDA
     # =========================
 
     def atualizar_dados(self, novos_dados):
 
         for chave, valor in novos_dados.items():
 
-            if chave not in self.dados:
-                continue
-
-            # 🔥 ignora lixo
+            # 🔥 agora aceita novos campos
             if valor is None:
                 continue
 
-            # 🔥 prioridade para informação nova
-            if self.dados[chave] is None:
+            # 🔥 cria campo se não existir
+            if chave not in self.dados:
                 self.dados[chave] = valor
-            else:
-                # 🔥 atualiza somente se for mudança relevante
-                if self.dados[chave] != valor:
-                    self.dados[chave] = valor
+                continue
+
+            # 🔥 sempre atualiza (remove bug antigo)
+            self.dados[chave] = valor
 
     def obter_dados(self):
         return self.dados
