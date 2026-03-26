@@ -1,23 +1,24 @@
 from ia_client import client
+from ia_validator import validar_parecer
 import json
 
 
 def gerar_parecer_juridico(contexto, dados, resultado):
 
     prompt = f"""
-Você é um consultor trabalhista estratégico para RH.
+Você é um consultor trabalhista experiente, especializado em apoiar decisões de empresas e RH.
 
 ⚠️ ESTILO:
-- Linguagem clara (não jurídica complexa)
-- Explicativo, mas direto
-- Profissional
-- Pode usar termos técnicos SIM, mas explicando
+- Linguagem clara e profissional (consultoria)
+- Evitar juridiquês excessivo
+- Explicar termos técnicos quando necessário
+- Direto, mas completo
 
 ⚠️ OBJETIVO:
-Gerar um parecer completo e útil para tomada de decisão.
+Gerar um parecer trabalhista completo, com base legal e orientação prática.
 
 -----------------------------------
-DADOS DO CASO
+📌 DADOS DO CASO
 -----------------------------------
 
 Tipo de caso: {dados.get("tipo_caso")}
@@ -27,94 +28,68 @@ Salário: {dados.get("salario")}
 Horas extras semanais: {dados.get("horas_extras_semanais")}
 
 -----------------------------------
-CONTEXTO
+📌 CONTEXTO
 -----------------------------------
 {contexto}
 
 -----------------------------------
-ANÁLISE DO SISTEMA
+📌 ANÁLISE DO SISTEMA
 -----------------------------------
 
 Risco base: {resultado.get("risco")}
 Pontuação: {resultado.get("pontuacao")}
 
 -----------------------------------
-INSTRUÇÕES
+⚠️ INSTRUÇÕES
 -----------------------------------
 
-1. Explicar o cenário com clareza
-2. Explicar o risco considerando:
-   - horas extras habituais
-   - reflexos (FGTS, férias, 13º, DSR)
-3. Explicar que:
-   → o juiz pode reconhecer essas horas
-   → pode aplicar o piso da categoria
-   → isso aumenta o valor da condenação
-4. Considerar:
-   - tendência da Justiça do Trabalho (proteção ao empregado)
-   - falta de controle de ponto (aumenta risco)
-5. Trazer base legal de forma simples:
-   - CLT (horas extras e integração)
-   - Constituição (proteção ao trabalhador)
-   - mencionar entendimento da Justiça do Trabalho
+1. Explicar o cenário de forma clara  
+2. Explicar o risco com base na prática da Justiça do Trabalho  
+3. Trazer base legal: CLT e Constituição Federal  
+4. Mencionar entendimento da Justiça do Trabalho (jurisprudência)  
+5. Explicar impactos financeiros incluindo:
+   - FGTS  
+   - férias + 1/3  
+   - 13º salário  
+   - DSR  
+6. Explicar consequências reais (risco de condenação)  
+7. Sugerir ações práticas para empresa  
 
 ⚠️ IMPORTANTE:
-- NÃO ser raso
-- NÃO escrever como chatbot
-- NÃO dar resposta genérica
+- NÃO ser genérico  
+- NÃO simplificar demais  
+- NÃO responder como chatbot  
 
 -----------------------------------
-FORMATO JSON
+📦 FORMATO JSON
 -----------------------------------
 
 {{
-  "diagnostico": "Explicação clara e completa do problema",
   "risco": "BAIXO | MÉDIO | ALTO",
-  "motivo_risco": "Explicação detalhada do risco, incluindo impacto financeiro, reflexos, piso da categoria e base legal",
-  "o_que_fazer": [
-    "Ação prática 1",
-    "Ação prática 2",
-    "Ação prática 3",
-    "Ação prática 4"
-  ]
+  "diagnostico": "explicação clara do cenário",
+  "fundamentacao": "base legal + entendimento da Justiça do Trabalho + menção à jurisprudência",
+  "impactos": "explicação dos reflexos trabalhistas",
+  "impacto_financeiro": número,
+  "recomendacao": "orientação prática para empresa/RH"
 }}
 """
 
     try:
 
         resposta = client.responses.create(
-            model="gpt-4.1-mini",
+            model="gpt-4.1",
             input=prompt,
-            timeout=20
+            timeout=30
         )
 
         texto = resposta.output_text.strip()
 
-        if "```" in texto:
-            partes = texto.split("```")
-            texto = partes[1] if len(partes) > 1 else partes[0]
-
-        return json.loads(texto)
+        # 🔥 AGORA COM VALIDAÇÃO PROFISSIONAL
+        return validar_parecer(texto)
 
     except Exception as e:
 
         print("ERRO IA:", e)
 
-        return {
-            "diagnostico": (
-                "Funcionário com horas extras habituais não registradas, "
-                "o que pode gerar reflexos na rescisão."
-            ),
-            "risco": resultado.get("risco", "MÉDIO"),
-            "motivo_risco": (
-                "Horas extras não pagas podem ser cobradas judicialmente com reflexos em FGTS, "
-                "férias, 13º e DSR. A Justiça do Trabalho tende a proteger o empregado e pode aplicar "
-                "o piso da categoria, aumentando o valor da condenação."
-            ),
-            "o_que_fazer": [
-                "Revisar jornada e controle de ponto",
-                "Calcular horas extras e reflexos",
-                "Verificar convenção coletiva",
-                "Avaliar acordo preventivo"
-            ]
-        }
+        # 🔥 fallback seguro mesmo em erro de API
+        return validar_parecer("")

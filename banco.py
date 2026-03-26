@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime
 import json
+import bcrypt
 
 DB_NAME = "dpia.db"
 
@@ -13,13 +14,28 @@ def criar_tabelas():
     conn = conectar()
     cursor = conn.cursor()
 
-    # =========================
-    # EMPRESAS
-    # =========================
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        senha_hash TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS uso_mensal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER,
+        mes TEXT,
+        total_analises INTEGER DEFAULT 0
+    )
+    """)
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS empresas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT NOT NULL,
+        usuario_id INTEGER,
+        nome TEXT,
         cnpj TEXT,
         cidade TEXT,
         estado TEXT,
@@ -27,46 +43,116 @@ def criar_tabelas():
     )
     """)
 
-    # =========================
-    # FUNCIONÁRIOS
-    # =========================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS funcionarios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        empresa_id INTEGER,
-        nome TEXT NOT NULL,
-        cpf TEXT,
-        cargo TEXT,
-        data_admissao TEXT,
-        FOREIGN KEY (empresa_id) REFERENCES empresas(id)
-    )
-    """)
-
-    # =========================
-    # 🔥 NOVA TABELA ANALISES (ATUALIZADA)
-    # =========================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS analises (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         empresa_id INTEGER,
-        funcionario_id INTEGER,
-
         data_analise TEXT,
-
         tipo_caso TEXT,
         risco TEXT,
         pontuacao INTEGER,
-
         dados_json TEXT,
         resultado_json TEXT,
         parecer_json TEXT,
-
-        versao_ia TEXT,
-
-        FOREIGN KEY (empresa_id) REFERENCES empresas(id),
-        FOREIGN KEY (funcionario_id) REFERENCES funcionarios(id)
+        versao_ia TEXT
     )
     """)
+
+    conn.commit()
+    conn.close()
+
+
+# =========================
+# 🔐 USUÁRIOS (SEGURO)
+# =========================
+
+def criar_usuario(email, senha):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+
+    cursor.execute("""
+    INSERT INTO usuarios (email, senha_hash)
+    VALUES (?, ?)
+    """, (email, senha_hash))
+
+    conn.commit()
+    conn.close()
+
+
+def login_usuario(email, senha):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT id, senha_hash FROM usuarios
+    WHERE email = ?
+    """, (email,))
+
+    user = cursor.fetchone()
+    conn.close()
+
+    if not user:
+        return None
+
+    user_id, senha_hash = user
+
+    if bcrypt.checkpw(senha.encode(), senha_hash):
+        return user_id
+
+    return None
+
+
+# =========================
+# USO
+# =========================
+
+def obter_mes_atual():
+    return datetime.now().strftime("%Y-%m")
+
+
+def obter_uso_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    mes = obter_mes_atual()
+
+    cursor.execute("""
+    SELECT total_analises FROM uso_mensal
+    WHERE usuario_id = ? AND mes = ?
+    """, (usuario_id, mes))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row[0] if row else 0
+
+
+def incrementar_uso(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+
+    mes = obter_mes_atual()
+
+    cursor.execute("""
+    SELECT id FROM uso_mensal
+    WHERE usuario_id = ? AND mes = ?
+    """, (usuario_id, mes))
+
+    row = cursor.fetchone()
+
+    if row:
+        cursor.execute("""
+        UPDATE uso_mensal
+        SET total_analises = total_analises + 1
+        WHERE id = ?
+        """, (row[0],))
+    else:
+        cursor.execute("""
+        INSERT INTO uso_mensal (usuario_id, mes, total_analises)
+        VALUES (?, ?, 1)
+        """, (usuario_id, mes))
 
     conn.commit()
     conn.close()
@@ -76,14 +162,15 @@ def criar_tabelas():
 # EMPRESAS
 # =========================
 
-def cadastrar_empresa(nome, cnpj, cidade, estado):
+def cadastrar_empresa(usuario_id, nome, cnpj, cidade, estado):
     conn = conectar()
     cursor = conn.cursor()
 
     cursor.execute("""
-    INSERT INTO empresas (nome, cnpj, cidade, estado, data_cadastro)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO empresas (usuario_id, nome, cnpj, cidade, estado, data_cadastro)
+    VALUES (?, ?, ?, ?, ?, ?)
     """, (
+        usuario_id,
         nome,
         cnpj,
         cidade,
@@ -95,47 +182,15 @@ def cadastrar_empresa(nome, cnpj, cidade, estado):
     conn.close()
 
 
-def listar_empresas():
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, nome FROM empresas ORDER BY nome ASC")
-    dados = cursor.fetchall()
-    conn.close()
-    return dados
-
-
-# =========================
-# FUNCIONÁRIOS
-# =========================
-
-def cadastrar_funcionario(empresa_id, nome, cpf, cargo, data_admissao):
+def listar_empresas(usuario_id):
     conn = conectar()
     cursor = conn.cursor()
 
     cursor.execute("""
-    INSERT INTO funcionarios (empresa_id, nome, cpf, cargo, data_admissao)
-    VALUES (?, ?, ?, ?, ?)
-    """, (
-        empresa_id,
-        nome,
-        cpf,
-        cargo,
-        data_admissao
-    ))
-
-    conn.commit()
-    conn.close()
-
-
-def listar_funcionarios(empresa_id):
-    conn = conectar()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT id, nome FROM funcionarios
-    WHERE empresa_id = ?
+    SELECT id, nome FROM empresas
+    WHERE usuario_id = ?
     ORDER BY nome ASC
-    """, (empresa_id,))
+    """, (usuario_id,))
 
     dados = cursor.fetchall()
     conn.close()
@@ -143,12 +198,11 @@ def listar_funcionarios(empresa_id):
 
 
 # =========================
-# 🔥 SALVAR ANÁLISE (NOVO PADRÃO)
+# ANALISES
 # =========================
 
 def salvar_analise(
     empresa_id,
-    funcionario_id,
     tipo_caso,
     risco,
     pontuacao,
@@ -163,7 +217,6 @@ def salvar_analise(
     cursor.execute("""
     INSERT INTO analises (
         empresa_id,
-        funcionario_id,
         data_analise,
         tipo_caso,
         risco,
@@ -173,10 +226,9 @@ def salvar_analise(
         parecer_json,
         versao_ia
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         empresa_id,
-        funcionario_id,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         tipo_caso,
         risco,
@@ -189,23 +241,3 @@ def salvar_analise(
 
     conn.commit()
     conn.close()
-
-
-# =========================
-# HISTÓRICO (AJUSTADO)
-# =========================
-
-def listar_analises_por_funcionario(funcionario_id):
-    conn = conectar()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT id, data_analise, risco, pontuacao
-    FROM analises
-    WHERE funcionario_id = ?
-    ORDER BY id DESC
-    """, (funcionario_id,))
-
-    dados = cursor.fetchall()
-    conn.close()
-    return dados
