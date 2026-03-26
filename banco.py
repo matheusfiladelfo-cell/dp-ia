@@ -3,13 +3,20 @@ from datetime import datetime
 import json
 import bcrypt
 
+# 🔥 PADRÃO ÚNICO DE BANCO (CRÍTICO)
 DB_NAME = "dpia.db"
 
 
+# =========================
+# CONEXÃO CENTRALIZADA
+# =========================
 def conectar():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 
+# =========================
+# TABELAS
+# =========================
 def criar_tabelas():
     conn = conectar()
     cursor = conn.cursor()
@@ -63,9 +70,8 @@ def criar_tabelas():
 
 
 # =========================
-# 🔐 USUÁRIOS (SEGURO)
+# 🔐 USUÁRIOS
 # =========================
-
 def criar_usuario(email, senha):
     conn = conectar()
     cursor = conn.cursor()
@@ -107,7 +113,6 @@ def login_usuario(email, senha):
 # =========================
 # USO
 # =========================
-
 def obter_mes_atual():
     return datetime.now().strftime("%Y-%m")
 
@@ -161,7 +166,6 @@ def incrementar_uso(usuario_id):
 # =========================
 # EMPRESAS
 # =========================
-
 def cadastrar_empresa(usuario_id, nome, cnpj, cidade, estado):
     conn = conectar()
     cursor = conn.cursor()
@@ -200,7 +204,6 @@ def listar_empresas(usuario_id):
 # =========================
 # ANALISES
 # =========================
-
 def salvar_analise(
     empresa_id,
     tipo_caso,
