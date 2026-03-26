@@ -61,7 +61,7 @@ if st.button("Enviar"):
         sessao.adicionar("assistant", str(parecer))
 
     # =========================
-    # OUTPUT PROFISSIONAL
+    # OUTPUT
     # =========================
 
     st.markdown("## 📊 Resultado da análise")
@@ -70,31 +70,30 @@ if st.button("Enviar"):
 
     st.markdown("---")
 
-    # 🔥 DIAGNÓSTICO
+    # DIAGNÓSTICO
     st.subheader("🧠 O que está acontecendo")
     st.write(parecer.get("diagnostico", ""))
 
-    # 🔥 MOTIVO DO RISCO
+    # MOTIVO
     st.subheader("⚠ Por que isso é risco")
     st.write(parecer.get("motivo_risco", ""))
 
-    # 🔥 BASE LEGAL (FIXA + IA)
+    # BASE LEGAL
     st.subheader("⚖️ Base legal")
     st.write("""
-A CLT (art. 7º da Constituição e art. 59 da CLT) exige pagamento de horas extras com adicional mínimo de 50%.
-A Justiça do Trabalho reconhece reflexos em férias, 13º, FGTS e DSR quando as horas são habituais.
+A CLT (art. 59) exige pagamento de horas extras com adicional mínimo de 50%.
+A Constituição Federal (art. 7º) protege o trabalhador contra prejuízos salariais.
+A Justiça do Trabalho reconhece reflexos em férias, 13º, FGTS e DSR quando há habitualidade.
 Também pode aplicar o piso da categoria, aumentando o valor da condenação.
 """)
 
-    # 🔥 AÇÕES
+    # AÇÕES
     st.subheader("✅ O que fazer agora")
 
     for acao in parecer.get("o_que_fazer", []):
         st.write(f"✔ {acao}")
 
-    # =========================
     # PERGUNTAS
-    # =========================
     if dados.get("perguntas"):
         st.markdown("---")
         st.warning("🔎 Para refinar a análise:")
@@ -104,13 +103,18 @@ Também pode aplicar o piso da categoria, aumentando o valor da condenação.
             st.caption(p["motivo"])
 
     # =========================
-    # SALVAR
+    # 🔥 SALVAR CORRETO (FIX PRINCIPAL)
     # =========================
     salvar_analise(
-        None,
-        None,
-        parecer.get("risco", "N/A"),
-        str(parecer)
+        empresa_id=None,
+        funcionario_id=None,
+        tipo_caso=dados_consolidados.get("tipo_caso"),
+        risco=parecer.get("risco", "N/A"),
+        pontuacao=resultado.get("pontuacao", 0),
+        dados=dados_consolidados,
+        resultado=resultado,
+        parecer=parecer,
+        versao_ia="v10"
     )
 
 
