@@ -32,11 +32,9 @@ from plano_service import (
 
 from gerenciador_sessao import get_sessao
 
-# 🔥 NOVO
 from score_engine import calcular_score
 
 
-# 🔥 LIMPEZA TEXTO IA
 def limpar_texto_ia(texto):
     if not texto:
         return ""
@@ -52,12 +50,10 @@ def limpar_texto_ia(texto):
     return "\n".join(linhas_limpas).strip()
 
 
-# 🔥 VALIDAÇÃO EMAIL
 def email_valido(email):
     return re.match(r"[^@]+@[^@]+\.[^@]+", email)
 
 
-# 🔥 VALIDAÇÃO CNPJ
 def validar_cnpj(cnpj):
     cnpj = ''.join(filter(str.isdigit, cnpj))
 
@@ -82,13 +78,10 @@ def validar_cnpj(cnpj):
 
 
 criar_tabelas()
-
 st.set_page_config(page_title="DP-IA", layout="wide")
 
 
-# =========================
 # LOGIN
-# =========================
 if "user_id" not in st.session_state:
 
     st.title("🔐 DP-IA | Login")
@@ -135,24 +128,32 @@ usuario_id = st.session_state.user_id
 sessao = get_sessao()
 
 
-# =========================
 # HEADER
-# =========================
-st.markdown("# 🧠 DP-IA")
-st.markdown("### Consultor Trabalhista Inteligente para Empresas")
+st.markdown("""
+# ⚖️ M&P Consultoria Trabalhista
+
+### Inteligência jurídica para decisões seguras em RH
+""")
+
+st.markdown("""
+<div style="
+padding:20px;
+border-radius:10px;
+background: linear-gradient(90deg, #1e3c72, #2a5298);
+color:white;
+margin-bottom:20px;
+">
+<h3>📊 Gestão de Risco Trabalhista</h3>
+<p>Analise casos, identifique riscos e tome decisões com segurança jurídica.</p>
+</div>
+""", unsafe_allow_html=True)
 
 
-# =========================
-# LOGOUT
-# =========================
 if st.sidebar.button("🚪 Sair"):
     del st.session_state["user_id"]
     st.rerun()
 
 
-# =========================
-# MODO
-# =========================
 modo = st.radio(
     "Modo de uso",
     ["🔵 Análise", "🟢 Conversa assistida"],
@@ -160,9 +161,7 @@ modo = st.radio(
 )
 
 
-# =========================
 # EMPRESAS
-# =========================
 st.sidebar.markdown("## 🏢 Empresas")
 
 empresas = listar_empresas(usuario_id)
@@ -179,7 +178,6 @@ empresa_selecionada = st.sidebar.selectbox(
 )
 
 empresa_id = empresa_map.get(empresa_selecionada)
-
 st.session_state.empresa_id = empresa_id
 
 
@@ -213,9 +211,7 @@ if st.sidebar.button("Cadastrar empresa"):
     st.rerun()
 
 
-# =========================
 # INSIGHTS
-# =========================
 if empresa_id:
 
     insights = gerar_insights_empresa(empresa_id)
@@ -239,9 +235,7 @@ if empresa_id:
         st.markdown("---")
 
 
-# =========================
-# DIAGNÓSTICO INTELIGENTE
-# =========================
+# DIAGNÓSTICO INTELIGENTE (CORRIGIDO)
 if empresa_id:
 
     relatorio = gerar_relatorio_empresa(empresa_id)
@@ -255,6 +249,8 @@ if empresa_id:
         except:
             impacto_rel = 0
 
+        problema = relatorio.get("problema") or "Não identificado com clareza"
+
         st.markdown("## 🧠 Diagnóstico Inteligente")
 
         st.markdown(f"""
@@ -263,7 +259,7 @@ A empresa apresenta padrão recorrente de risco trabalhista.
 ⚠️ **{relatorio['percentual']}% dos casos são de alto risco**
 
 📌 **Principal problema identificado:**  
-{relatorio['problema']}
+{problema}
 
 💰 **Impacto financeiro estimado:**  
 R$ {impacto_rel:,.2f}
@@ -272,9 +268,7 @@ R$ {impacto_rel:,.2f}
         st.markdown("---")
 
 
-# =========================
 # USO
-# =========================
 plano = get_plano_usuario()
 uso = obter_uso_usuario(usuario_id)
 limite = get_limite_analises(plano)
@@ -283,14 +277,25 @@ st.markdown(f"💼 Plano: {plano}")
 st.markdown(f"📊 Uso: {uso} / {limite}")
 
 
-# =========================
 # ANÁLISE
-# =========================
 if modo == "🔵 Análise":
 
     texto_usuario = st.text_area("Descreva o caso:")
 
-    if st.button("Analisar"):
+    # NOVO BLOCO SALÁRIO
+    st.markdown("### 💰 Simulação financeira (opcional)")
+    mostrar_salario = st.toggle("Informar salário para cálculo mais preciso")
+
+    salario_usuario = None
+
+    if mostrar_salario:
+        salario_usuario = st.number_input(
+            "Salário do colaborador (R$)",
+            min_value=0.0,
+            step=100.0
+        )
+
+    if st.button("🔍 Analisar Caso", use_container_width=True):
 
         if not empresa_id:
             st.error("Selecione uma empresa")
@@ -300,7 +305,7 @@ if modo == "🔵 Análise":
             st.error("Limite atingido")
             st.stop()
 
-        with st.spinner("🧠 Analisando caso trabalhista..."):
+        with st.spinner("🔎 Analisando risco trabalhista..."):
 
             dados = analisar_texto_usuario(texto_usuario)
 
@@ -344,26 +349,26 @@ if modo == "🔵 Análise":
 
         def cor_score(score):
             if score >= 80:
-                return "🔴"
+                return "🔴 Alto"
             elif score >= 60:
-                return "🟠"
+                return "🟠 Moderado"
             elif score >= 40:
-                return "🟡"
+                return "🟡 Atenção"
             else:
-                return "🟢"
+                return "🟢 Baixo"
 
         st.markdown("## 📊 Índice de Risco Trabalhista (DP-IA)")
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            st.metric("Score", f"{cor_score(score)} {score}/100")
+            st.metric("Score", f"{score}/100")
 
         with col2:
             st.metric("Probabilidade de Condenação", f"{probabilidade}%")
 
         with col3:
-            st.metric("Nível de Risco", nivel)
+            st.metric("Nível de Risco", cor_score(score))
 
         st.markdown("### 🧠 Fatores que influenciaram o score")
 
@@ -374,27 +379,43 @@ if modo == "🔵 Análise":
 
         st.markdown("---")
 
-        st.markdown("## 📊 Diagnóstico")
+        st.markdown("## 🧾 Análise do Caso")
         st.markdown(limpar_texto_ia(parecer.get("diagnostico")))
-
-        st.markdown("## ⚖️ Fundamentação Jurídica")
-        st.markdown(limpar_texto_ia(parecer.get("fundamentacao")))
-
-        st.markdown("## 📉 Impactos Trabalhistas")
-        st.markdown(parecer.get("impactos"))
 
         st.markdown("## 💰 Impacto Financeiro")
 
-        impacto = parecer.get("impacto_financeiro", 0)
+        # NOVO CÁLCULO
+        impacto = 0
 
-        try:
-            impacto = float(impacto)
-        except:
+        if salario_usuario and salario_usuario > 0:
+
+            fgts = salario_usuario * 0.08 * 12
+            multa_fgts = fgts * 0.4
+            ferias = salario_usuario + (salario_usuario / 3)
+            decimo = salario_usuario
+
+            impacto = fgts + multa_fgts + ferias + decimo
+
+        else:
+            impacto = parecer.get("impacto_financeiro", 0)
+
+        if impacto < 100:
             impacto = 0
 
         st.markdown(f"### R$ {impacto:,.2f}")
 
-        st.markdown("## 🎯 Recomendação")
+        with st.expander("📊 Ver como o valor foi calculado"):
+
+            if salario_usuario and salario_usuario > 0:
+                st.write(f"Salário base: R$ {salario_usuario:,.2f}")
+                st.write(f"FGTS (12 meses): R$ {fgts:,.2f}")
+                st.write(f"Multa FGTS (40%): R$ {multa_fgts:,.2f}")
+                st.write(f"Férias + 1/3: R$ {ferias:,.2f}")
+                st.write(f"13º salário: R$ {decimo:,.2f}")
+            else:
+                st.write("Valor estimado com base em padrões de mercado.")
+
+        st.markdown("## 📌 Orientação Estratégica")
         st.markdown(limpar_texto_ia(parecer.get("recomendacao")))
 
         if pode_gerar_pdf(plano):
@@ -424,12 +445,10 @@ if modo == "🔵 Análise":
         )
 
 
-# =========================
 # CHAT
-# =========================
 else:
 
-    st.subheader("💬 Assistente")
+    st.subheader("💬 Consultor Trabalhista")
 
     user_input = st.chat_input("Digite sua dúvida...")
 
@@ -448,16 +467,15 @@ else:
             st.write(msg["texto"])
 
 
-# =========================
-# DIREITOS
-# =========================
+# FOOTER
 st.markdown("---")
 
 st.caption("""
-© 2025 DP-IA — Desenvolvido por Matheus Filadelfo Pires da Costa
+© 2026 Matheus Filadelfo Pires da Costa
 
-Todos os direitos reservados.
-Uso exclusivo. Proibida reprodução sem autorização.
+⚖️ M&P Consultoria Trabalhista  
+Inteligência aplicada à gestão de risco em RH  
 
-Este sistema fornece apoio à decisão e não substitui consultoria jurídica.
+Todos os direitos reservados.  
+Este sistema fornece apoio à decisão e não substitui análise jurídica formal.
 """)
