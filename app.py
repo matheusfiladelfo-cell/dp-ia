@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+import re
 
 from banco import (
     criar_tabelas,
@@ -51,6 +52,35 @@ def limpar_texto_ia(texto):
     return "\n".join(linhas_limpas).strip()
 
 
+# 🔥 VALIDAÇÃO EMAIL
+def email_valido(email):
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
+
+
+# 🔥 VALIDAÇÃO CNPJ
+def validar_cnpj(cnpj):
+    cnpj = ''.join(filter(str.isdigit, cnpj))
+
+    if len(cnpj) != 14:
+        return False
+
+    if cnpj == cnpj[0] * 14:
+        return False
+
+    def calcular_digito(cnpj, peso):
+        soma = sum(int(a) * b for a, b in zip(cnpj, peso))
+        resto = soma % 11
+        return '0' if resto < 2 else str(11 - resto)
+
+    peso1 = [5,4,3,2,9,8,7,6,5,4,3,2]
+    peso2 = [6] + peso1
+
+    dig1 = calcular_digito(cnpj[:12], peso1)
+    dig2 = calcular_digito(cnpj[:13], peso2)
+
+    return cnpj[-2:] == dig1 + dig2
+
+
 criar_tabelas()
 
 st.set_page_config(page_title="DP-IA", layout="wide")
@@ -68,8 +98,16 @@ if "user_id" not in st.session_state:
     email = st.text_input("Email")
     senha = st.text_input("Senha", type="password")
 
+    if email and not email_valido(email):
+        st.warning("Digite um email válido")
+
     if aba == "Entrar":
         if st.button("Entrar"):
+
+            if not email_valido(email):
+                st.error("Email inválido")
+                st.stop()
+
             user_id = login_usuario(email, senha)
             if user_id:
                 st.session_state.user_id = user_id
@@ -79,6 +117,11 @@ if "user_id" not in st.session_state:
 
     else:
         if st.button("Criar conta"):
+
+            if not email_valido(email):
+                st.error("Digite um email válido")
+                st.stop()
+
             try:
                 criar_usuario(email, senha)
                 st.success("Conta criada! Faça login.")
@@ -149,16 +192,25 @@ cidade_empresa = st.sidebar.text_input("Cidade")
 estado_empresa = st.sidebar.text_input("Estado")
 
 if st.sidebar.button("Cadastrar empresa"):
-    if nome_empresa:
-        cadastrar_empresa(
-            usuario_id,
-            nome_empresa,
-            cnpj_empresa,
-            cidade_empresa,
-            estado_empresa
-        )
-        st.success("Empresa cadastrada")
-        st.rerun()
+
+    if not nome_empresa:
+        st.error("Informe o nome da empresa")
+        st.stop()
+
+    if not validar_cnpj(cnpj_empresa):
+        st.error("CNPJ inválido")
+        st.stop()
+
+    cadastrar_empresa(
+        usuario_id,
+        nome_empresa,
+        cnpj_empresa,
+        cidade_empresa,
+        estado_empresa
+    )
+
+    st.success("Empresa cadastrada")
+    st.rerun()
 
 
 # =========================
@@ -259,7 +311,6 @@ if modo == "🔵 Análise":
 
             impacto_temp = resultado.get("impacto", 0)
 
-            # ✅ CORREÇÃO DEFINITIVA
             tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
 
             if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
