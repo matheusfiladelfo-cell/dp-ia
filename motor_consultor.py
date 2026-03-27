@@ -8,10 +8,102 @@ from motor_afastamento import (
 )
 
 
+def detectar_riscos_criticos(dados):
+    """
+    Mantido como fallback de segurança
+    """
+
+    texto = str(dados).lower()
+
+    indicadores_alto = [
+        "ofensa", "humilha", "xing", "assédio", "assedio",
+        "gritou", "exposição", "exposicao", "constrangimento",
+        "agressão", "agressao", "dano moral"
+    ]
+
+    indicadores_medio = [
+        "discussão", "discussao", "conflito",
+        "advertência", "advertencia",
+        "clima ruim", "problema com gestor"
+    ]
+
+    for termo in indicadores_alto:
+        if termo in texto:
+            return "ALTO", 70
+
+    for termo in indicadores_medio:
+        if termo in texto:
+            return "MÉDIO", 40
+
+    return "BAIXO", 10
+
+
 def analisar_caso(tipo_caso, dados):
 
+    texto = str(dados).lower()
+    tipo_risco = str(dados.get("tipo_risco", "")).lower()
+
     # =====================================================
-    # RESCISÃO
+    # 🔥 PRIORIDADE ABSOLUTA — ASSÉDIO (BLINDAGEM TOTAL)
+    # =====================================================
+
+    if (
+        tipo_risco == "assedio_moral"
+        or any(p in texto for p in [
+            "ofensa", "humilha", "xing", "assedio", "assédio",
+            "constrangimento", "gritou", "exposição", "exposicao"
+        ])
+    ):
+        return {
+            "tipo": "Assédio moral",
+            "risco": "ALTO",
+            "pontuacao": 90,
+            "alertas": [{
+                "tipo": "ASSÉDIO",
+                "nivel": "ALTO",
+                "mensagem": "Conduta pode caracterizar assédio moral com alta probabilidade de condenação"
+            }]
+        }
+
+    # =====================================================
+    # 🔥 ACIDENTE
+    # =====================================================
+
+    if (
+        tipo_risco == "acidente_trabalho"
+        or any(p in texto for p in [
+            "acidente", "queda", "machucou", "lesão", "lesao"
+        ])
+    ):
+        return {
+            "tipo": "Acidente de trabalho",
+            "risco": "ALTO",
+            "pontuacao": 90,
+            "alertas": [{
+                "tipo": "ACIDENTE",
+                "nivel": "ALTO",
+                "mensagem": "Possível responsabilidade da empresa em acidente de trabalho"
+            }]
+        }
+
+    # =====================================================
+    # 🔶 CONFLITO
+    # =====================================================
+
+    if tipo_risco == "conflito_interpessoal":
+        return {
+            "tipo": "Conflito interpessoal",
+            "risco": "MÉDIO",
+            "pontuacao": 45,
+            "alertas": [{
+                "tipo": "CONFLITO",
+                "nivel": "MÉDIO",
+                "mensagem": "Situação pode evoluir para risco trabalhista"
+            }]
+        }
+
+    # =====================================================
+    # RESCISÃO (MANTIDO)
     # =====================================================
 
     if tipo_caso == "rescisao":
@@ -46,7 +138,7 @@ def analisar_caso(tipo_caso, dados):
         }
 
     # =====================================================
-    # AFASTAMENTO
+    # AFASTAMENTO (MANTIDO)
     # =====================================================
 
     elif tipo_caso in ["afastamento", "acidente_trabalho", "atestado"]:
@@ -54,41 +146,28 @@ def analisar_caso(tipo_caso, dados):
         dias = dados.get("dias_afastamento") or 15
 
         pagamento = calcular_responsabilidade_pagamento(dias)
-
         tipo_beneficio = classificar_beneficio("a_servico")
 
         alertas = []
 
-        # Estabilidade acidentária
         alerta_estabilidade = verificar_estabilidade_acidentaria(
-            tipo_beneficio,
-            None,
-            None
+            tipo_beneficio, None, None
         )
-
         if alerta_estabilidade:
             alertas.append(alerta_estabilidade)
 
-        # Demissão durante afastamento
         alerta_demissao = verificar_demissao_durante_afastamento(
-            dias,
-            None
+            dias, None
         )
-
         if alerta_demissao:
             alertas.append(alerta_demissao)
 
-        # CAT
         alerta_cat = verificar_prazo_cat(
-            None,
-            None,
-            "a_servico"
+            None, None, "a_servico"
         )
-
         if alerta_cat:
             alertas.append(alerta_cat)
 
-        # Classificação de risco
         risco = "BAIXO"
 
         for alerta in alertas:
@@ -116,12 +195,20 @@ def analisar_caso(tipo_caso, dados):
         }
 
     # =====================================================
-    # OUTROS
+    # OUTROS (COM SEGURANÇA REAL)
     # =====================================================
+
+    risco_detectado, pontuacao = detectar_riscos_criticos(dados)
 
     return {
         "tipo": "Dúvida trabalhista",
-        "risco": "BAIXO",
-        "pontuacao": 0,
-        "alertas": []
+        "risco": risco_detectado,
+        "pontuacao": pontuacao,
+        "alertas": [
+            {
+                "tipo": "ANÁLISE CONTEXTUAL",
+                "nivel": risco_detectado,
+                "mensagem": "Classificação baseada em análise do contexto do relato"
+            }
+        ]
     }

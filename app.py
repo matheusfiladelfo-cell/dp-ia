@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 
 from banco import (
     criar_tabelas,
@@ -29,6 +30,25 @@ from plano_service import (
 )
 
 from gerenciador_sessao import get_sessao
+
+# 🔥 NOVO
+from score_engine import calcular_score
+
+
+# 🔥 LIMPEZA TEXTO IA
+def limpar_texto_ia(texto):
+    if not texto:
+        return ""
+
+    linhas = texto.split("\n")
+
+    linhas_limpas = []
+    for linha in linhas:
+        if any(p in linha.upper() for p in ["BLOCO 1", "BLOCO 2", "BLOCO 3"]):
+            continue
+        linhas_limpas.append(linha)
+
+    return "\n".join(linhas_limpas).strip()
 
 
 criar_tabelas()
@@ -117,7 +137,6 @@ empresa_selecionada = st.sidebar.selectbox(
 
 empresa_id = empresa_map.get(empresa_selecionada)
 
-# 🔥 ESSA LINHA RESOLVE O DASHBOARD
 st.session_state.empresa_id = empresa_id
 
 
@@ -196,13 +215,6 @@ A empresa apresenta padrão recorrente de risco trabalhista.
 
 💰 **Impacto financeiro estimado:**  
 R$ {impacto_rel:,.2f}
-
----
-
-### 🎯 Recomendação estratégica
-
-Revisar imediatamente os processos relacionados ao problema identificado,
-reduzindo risco jurídico e passivo trabalhista futuro.
 """)
 
         st.markdown("---")
@@ -236,29 +248,89 @@ if modo == "🔵 Análise":
             st.error("Limite atingido")
             st.stop()
 
-        dados = analisar_texto_usuario(texto_usuario)
+        with st.spinner("🧠 Analisando caso trabalhista..."):
 
-        resultado = analisar_caso(
-            dados.get("tipo_caso"),
-            dados
-        )
+            dados = analisar_texto_usuario(texto_usuario)
 
-        parecer = gerar_parecer_juridico(
-            contexto=texto_usuario,
-            dados=dados,
-            resultado=resultado
-        )
+            resultado = analisar_caso(
+                dados.get("tipo_caso"),
+                dados
+            )
+
+            impacto_temp = resultado.get("impacto", 0)
+
+            # ✅ CORREÇÃO DEFINITIVA
+            tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
+
+            if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
+                resultado["risco"] = "ALTO"
+
+            score_data = calcular_score({
+                "risco": resultado.get("risco", "BAIXO"),
+                "impacto": impacto_temp,
+                "tem_prova": dados.get("tem_prova", False),
+                "testemunha": dados.get("testemunha", False),
+                "reincidente": dados.get("reincidente", False),
+                "tipo": tipo_para_score
+            })
+
+            score = score_data["score"]
+            probabilidade = score_data["probabilidade_condenacao"]
+            nivel = score_data["nivel"]
+            motivos = score_data["motivos"]
+
+        with st.spinner("⚖️ Gerando parecer jurídico..."):
+
+            parecer = gerar_parecer_juridico(
+                contexto=texto_usuario,
+                dados=dados,
+                resultado=resultado,
+                score=score,
+                probabilidade=probabilidade
+            )
 
         incrementar_uso(usuario_id)
 
+        def cor_score(score):
+            if score >= 80:
+                return "🔴"
+            elif score >= 60:
+                return "🟠"
+            elif score >= 40:
+                return "🟡"
+            else:
+                return "🟢"
+
+        st.markdown("## 📊 Índice de Risco Trabalhista (DP-IA)")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Score", f"{cor_score(score)} {score}/100")
+
+        with col2:
+            st.metric("Probabilidade de Condenação", f"{probabilidade}%")
+
+        with col3:
+            st.metric("Nível de Risco", nivel)
+
+        st.markdown("### 🧠 Fatores que influenciaram o score")
+
+        for m in motivos:
+            impacto_m = m["impacto"]
+            sinal = "+" if impacto_m >= 0 else "-"
+            st.write(f"{sinal}{impacto_m} → {m['fator']}")
+
+        st.markdown("---")
+
         st.markdown("## 📊 Diagnóstico")
-        st.write(parecer.get("diagnostico"))
+        st.markdown(limpar_texto_ia(parecer.get("diagnostico")))
 
         st.markdown("## ⚖️ Fundamentação Jurídica")
-        st.write(parecer.get("fundamentacao"))
+        st.markdown(limpar_texto_ia(parecer.get("fundamentacao")))
 
         st.markdown("## 📉 Impactos Trabalhistas")
-        st.write(parecer.get("impactos"))
+        st.markdown(parecer.get("impactos"))
 
         st.markdown("## 💰 Impacto Financeiro")
 
@@ -269,10 +341,10 @@ if modo == "🔵 Análise":
         except:
             impacto = 0
 
-        st.write(f"R$ {impacto:,.2f}")
+        st.markdown(f"### R$ {impacto:,.2f}")
 
         st.markdown("## 🎯 Recomendação")
-        st.write(parecer.get("recomendacao"))
+        st.markdown(limpar_texto_ia(parecer.get("recomendacao")))
 
         if pode_gerar_pdf(plano):
             pdf_path = gerar_pdf_parecer(
@@ -290,7 +362,13 @@ if modo == "🔵 Análise":
             parecer.get("risco"),
             resultado.get("pontuacao"),
             dados,
-            resultado,
+            {
+                **resultado,
+                "score": score,
+                "probabilidade": probabilidade,
+                "nivel": nivel,
+                "motivos": motivos
+            },
             parecer
         )
 

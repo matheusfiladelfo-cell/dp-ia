@@ -3,29 +3,28 @@ from ia_validator import validar_parecer
 import json
 
 
-def gerar_parecer_juridico(contexto, dados, resultado):
+def gerar_parecer_juridico(
+    contexto,
+    dados,
+    resultado,
+    score=None,
+    probabilidade=None
+):
 
     prompt = f"""
-Você é um consultor trabalhista experiente, especializado em apoiar decisões de empresas e RH.
+Você é um consultor trabalhista que orienta profissionais de RH.
 
-⚠️ ESTILO:
-- Linguagem clara e profissional (consultoria)
-- Evitar juridiquês excessivo
-- Explicar termos técnicos quando necessário
-- Direto, mas completo
+⚠️ REGRA CRÍTICA:
+A resposta DEVE ser dividida em 3 blocos VISÍVEIS e SEPARADOS.
 
-⚠️ OBJETIVO:
-Gerar um parecer trabalhista completo, com base legal e orientação prática.
+Se não separar corretamente, a resposta está errada.
 
 -----------------------------------
-📌 DADOS DO CASO
+📊 INDICADORES
 -----------------------------------
 
-Tipo de caso: {dados.get("tipo_caso")}
-Tipo de rescisão: {dados.get("tipo_rescisao")}
-Tempo de empresa: {dados.get("tempo_empresa_meses")}
-Salário: {dados.get("salario")}
-Horas extras semanais: {dados.get("horas_extras_semanais")}
+Índice de Risco Trabalhista (DP-IA): {score if score else "N/A"}/100  
+Probabilidade de condenação: {probabilidade if probabilidade else "N/A"}%
 
 -----------------------------------
 📌 CONTEXTO
@@ -33,44 +32,82 @@ Horas extras semanais: {dados.get("horas_extras_semanais")}
 {contexto}
 
 -----------------------------------
+📌 DADOS
+-----------------------------------
+
+Tipo de caso: {dados.get("tipo_caso")}
+Tipo de rescisão: {dados.get("tipo_rescisao")}
+Tempo de empresa: {dados.get("tempo_empresa_meses")}
+
+-----------------------------------
 📌 ANÁLISE DO SISTEMA
 -----------------------------------
 
-Risco base: {resultado.get("risco")}
-Pontuação: {resultado.get("pontuacao")}
+Risco calculado pelo sistema: {resultado.get("risco")}
+Pontuação interna: {resultado.get("pontuacao")}
 
 -----------------------------------
-⚠️ INSTRUÇÕES
+⚠️ DIRETRIZ PRINCIPAL (CRÍTICO)
 -----------------------------------
 
-1. Explicar o cenário de forma clara  
-2. Explicar o risco com base na prática da Justiça do Trabalho  
-3. Trazer base legal: CLT e Constituição Federal  
-4. Mencionar entendimento da Justiça do Trabalho (jurisprudência)  
-5. Explicar impactos financeiros incluindo:
-   - FGTS  
-   - férias + 1/3  
-   - 13º salário  
-   - DSR  
-6. Explicar consequências reais (risco de condenação)  
-7. Sugerir ações práticas para empresa  
+👉 A análise deve ser baseada na legislação trabalhista e na prática da Justiça do Trabalho
 
-⚠️ IMPORTANTE:
-- NÃO ser genérico  
-- NÃO simplificar demais  
-- NÃO responder como chatbot  
+👉 O score NÃO define o risco  
+👉 O score apenas reforça a análise
+
+👉 Se houver qualquer divergência:
+🔥 PREVALECE A ANÁLISE JURÍDICA
 
 -----------------------------------
-📦 FORMATO JSON
+⚠️ INSTRUÇÕES OBRIGATÓRIAS
+-----------------------------------
+
+A resposta DEVE seguir EXATAMENTE este formato:
+
+### BLOCO 1 — EXPLICAÇÃO SIMPLES
+- Explicar o que está acontecendo de forma clara
+- Usar linguagem simples
+- Explicar o cenário real (não baseado no score)
+- Inserir o score ({score}/100) apenas como complemento
+
+### BLOCO 2 — CONSULTORIA PARA RH
+- Explicar o risco REAL com base na prática da Justiça do Trabalho
+- Explicar chance de condenação ({probabilidade}%)
+- Traduzir o score como apoio (não como decisão)
+- Dizer claramente o que a empresa deve fazer
+
+### BLOCO 3 — BASE LEGAL
+- Fundamentar com CLT (artigos relevantes)
+- Constituição Federal
+- entendimento da Justiça do Trabalho (jurisprudência)
+- Explicar de forma acessível
+
+-----------------------------------
+⚠️ PROIBIDO:
+-----------------------------------
+
+❌ Basear a conclusão apenas no score  
+❌ Dizer "risco baixo" apenas porque o score é baixo  
+❌ Ignorar fundamentos jurídicos  
+❌ Misturar blocos  
+❌ Omitir títulos  
+
+-----------------------------------
+📦 FORMATO JSON (OBRIGATÓRIO)
 -----------------------------------
 
 {{
   "risco": "BAIXO | MÉDIO | ALTO",
-  "diagnostico": "explicação clara do cenário",
-  "fundamentacao": "base legal + entendimento da Justiça do Trabalho + menção à jurisprudência",
-  "impactos": "explicação dos reflexos trabalhistas",
-  "impacto_financeiro": número,
-  "recomendacao": "orientação prática para empresa/RH"
+
+  "diagnostico": "### BLOCO 1 — EXPLICAÇÃO SIMPLES\\nExplicação clara incluindo referência ao score ({score}/100) apenas como apoio",
+
+  "recomendacao": "### BLOCO 2 — CONSULTORIA PARA RH\\nOrientação prática baseada no risco jurídico real, usando o score ({score}/100) e probabilidade ({probabilidade}%) como complemento",
+
+  "fundamentacao": "### BLOCO 3 — BASE LEGAL\\nFundamentação com CLT, Constituição e jurisprudência",
+
+  "impactos": "Explicar FGTS, férias + 1/3, 13º e DSR",
+
+  "impacto_financeiro": número
 }}
 """
 
@@ -84,12 +121,10 @@ Pontuação: {resultado.get("pontuacao")}
 
         texto = resposta.output_text.strip()
 
-        # 🔥 AGORA COM VALIDAÇÃO PROFISSIONAL
         return validar_parecer(texto)
 
     except Exception as e:
 
         print("ERRO IA:", e)
 
-        # 🔥 fallback seguro mesmo em erro de API
         return validar_parecer("")
