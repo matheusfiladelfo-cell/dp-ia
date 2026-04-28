@@ -1,0 +1,264 @@
+{
+  "total_cases": 20,
+  "false_alto_before": 3,
+  "false_alto_after": 0,
+  "inconclusivo_expected_total": 2,
+  "inconclusivo_correct_before": 0,
+  "inconclusivo_correct_after": 2,
+  "score_coerencia_before": {
+    "ok": 8,
+    "total": 20
+  },
+  "score_coerencia_after": {
+    "ok": 14,
+    "total": 20
+  },
+  "consistencia_execucoes_after": {
+    "ok": 20,
+    "total": 20
+  },
+  "factual_quality_method": "heuristica_sem_llm",
+  "parecer_factual_quality_avg_0_10": 10.0,
+  "cases": [
+    {
+      "id": "C001",
+      "expected_risco": "BAIXO",
+      "before": {
+        "risco": "MÉDIO",
+        "score": 68
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 42
+      }
+    },
+    {
+      "id": "C002",
+      "expected_risco": "BAIXO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "BAIXO",
+        "score": 28
+      }
+    },
+    {
+      "id": "C003",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 77
+      }
+    },
+    {
+      "id": "C004",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 46
+      }
+    },
+    {
+      "id": "C005",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C006",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 41
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 42
+      }
+    },
+    {
+      "id": "C007",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C008",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 43
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C009",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 48
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 48
+      }
+    },
+    {
+      "id": "C010",
+      "expected_risco": "INCONCLUSIVO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "INCONCLUSIVO",
+        "score": 23
+      }
+    },
+    {
+      "id": "C011",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C012",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 65
+      }
+    },
+    {
+      "id": "C013",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 44
+      }
+    },
+    {
+      "id": "C014",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C015",
+      "expected_risco": "MEDIO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "MÉDIO",
+        "score": 42
+      }
+    },
+    {
+      "id": "C016",
+      "expected_risco": "BAIXO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "BAIXO",
+        "score": 22
+      }
+    },
+    {
+      "id": "C017",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 41
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    },
+    {
+      "id": "C018",
+      "expected_risco": "BAIXO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 43
+      },
+      "after": {
+        "risco": "BAIXO",
+        "score": 35
+      }
+    },
+    {
+      "id": "C019",
+      "expected_risco": "INCONCLUSIVO",
+      "before": {
+        "risco": "BAIXO",
+        "score": 38
+      },
+      "after": {
+        "risco": "INCONCLUSIVO",
+        "score": 23
+      }
+    },
+    {
+      "id": "C020",
+      "expected_risco": "ALTO",
+      "before": {
+        "risco": "ALTO",
+        "score": 100
+      },
+      "after": {
+        "risco": "ALTO",
+        "score": 75
+      }
+    }
+  ]
+}

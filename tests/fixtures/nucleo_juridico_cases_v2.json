@@ -1,0 +1,202 @@
+[
+  {
+    "id": "C001",
+    "titulo": "Pedido de demissao voluntario sem conflito",
+    "texto_caso": "Colaborador pediu demissao por proposta externa, sem registro de conflito, sem advertencias recentes.",
+    "expected": {
+      "tipo_risco": "geral",
+      "risco_juridico": "BAIXO",
+      "max_score": 35
+    }
+  },
+  {
+    "id": "C002",
+    "titulo": "Rescisao sem justa causa com documentacao completa",
+    "texto_caso": "Empresa realizou demissao sem justa causa, verbas pagas no prazo, aviso previo cumprido e homologacao regular.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "BAIXO",
+      "max_score": 45
+    }
+  },
+  {
+    "id": "C003",
+    "titulo": "Assedio moral com testemunhas",
+    "texto_caso": "Gestor humilhou colaboradora em reunioes publicas por semanas, ha testemunhas e mensagens internas.",
+    "expected": {
+      "tipo_risco": "assedio_moral",
+      "risco_juridico": "ALTO",
+      "min_score": 75
+    }
+  },
+  {
+    "id": "C004",
+    "titulo": "Conflito isolado entre colaborador e gestor",
+    "texto_caso": "Houve discussao pontual sem ofensas graves, com alinhamento posterior e sem reincidencia.",
+    "expected": {
+      "tipo_risco": "conflito_interpessoal",
+      "risco_juridico": "MEDIO",
+      "score_range": [35, 65]
+    }
+  },
+  {
+    "id": "C005",
+    "titulo": "Acidente de trabalho sem CAT emitida",
+    "texto_caso": "Funcionario sofreu queda em operacao, foi afastado e a empresa nao emitiu CAT no prazo.",
+    "expected": {
+      "tipo_risco": "acidente_trabalho",
+      "risco_juridico": "ALTO",
+      "min_score": 75
+    }
+  },
+  {
+    "id": "C006",
+    "titulo": "Afastamento por doenca comum com retorno regular",
+    "texto_caso": "Colaborador ficou 20 dias afastado por doenca comum e retornou sem intercorrencias.",
+    "expected": {
+      "tipo_risco": "afastamento",
+      "risco_juridico": "MEDIO",
+      "score_range": [30, 60]
+    }
+  },
+  {
+    "id": "C007",
+    "titulo": "Gestante desligada sem avaliacao juridica",
+    "texto_caso": "Empresa desligou funcionaria e depois descobriu gestacao em periodo de estabilidade.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "ALTO",
+      "min_score": 80
+    }
+  },
+  {
+    "id": "C008",
+    "titulo": "Justa causa sem prova documental",
+    "texto_caso": "Empregado foi dispensado por justa causa, porem sem dossie documental e sem historico disciplinar.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "ALTO",
+      "min_score": 70
+    }
+  },
+  {
+    "id": "C009",
+    "titulo": "Horas extras habituais sem controle confiavel",
+    "texto_caso": "Equipe registra horas extras recorrentes e sistema de ponto apresenta divergencias frequentes.",
+    "expected": {
+      "tipo_risco": "hora_extra",
+      "risco_juridico": "MEDIO",
+      "score_range": [45, 75]
+    }
+  },
+  {
+    "id": "C010",
+    "titulo": "Denuncia vaga sem fatos verificaveis",
+    "texto_caso": "RH recebeu relato generico de injustica sem data, sem envolvidos e sem evidencias.",
+    "expected": {
+      "tipo_risco": "inconclusivo",
+      "risco_juridico": "INCONCLUSIVO",
+      "max_score": 45
+    }
+  },
+  {
+    "id": "C011",
+    "titulo": "Retorno INSS seguido de demissao imediata",
+    "texto_caso": "Empregado retornou do INSS e foi desligado na mesma semana, sem parecer medico ocupacional.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "ALTO",
+      "min_score": 75
+    }
+  },
+  {
+    "id": "C012",
+    "titulo": "Reclamacao de assedio sem confirmacao",
+    "texto_caso": "Colaborador relata constrangimento, mas sem testemunhas, sem mensagens e sem reincidencia comprovada.",
+    "expected": {
+      "tipo_risco": "assedio_moral",
+      "risco_juridico": "MEDIO",
+      "score_range": [45, 70]
+    }
+  },
+  {
+    "id": "C013",
+    "titulo": "Acidente leve com toda documentacao regular",
+    "texto_caso": "Houve corte leve em atividade, CAT emitida no prazo e retorno sem sequelas.",
+    "expected": {
+      "tipo_risco": "acidente_trabalho",
+      "risco_juridico": "MEDIO",
+      "score_range": [45, 70]
+    }
+  },
+  {
+    "id": "C014",
+    "titulo": "Cipeiro dispensado sem validacao",
+    "texto_caso": "Integrante da CIPA foi desligado por reestruturacao sem avaliacao de estabilidade.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "ALTO",
+      "min_score": 80
+    }
+  },
+  {
+    "id": "C015",
+    "titulo": "Empresa com historico de reincidencia disciplinar",
+    "texto_caso": "Mesma area acumula reclamacoes similares de conduta de lideranca sem plano de mitigacao.",
+    "expected": {
+      "tipo_risco": "geral",
+      "risco_juridico": "MEDIO",
+      "score_range": [50, 75]
+    }
+  },
+  {
+    "id": "C016",
+    "titulo": "Duvida sobre prazo de pagamento de verbas",
+    "texto_caso": "RH quer confirmar prazo correto de pagamento rescisorio para evitar multa.",
+    "expected": {
+      "tipo_risco": "geral",
+      "risco_juridico": "BAIXO",
+      "max_score": 35
+    }
+  },
+  {
+    "id": "C017",
+    "titulo": "Doenca ocupacional com CID sensivel",
+    "texto_caso": "Funcionario com CID M54 relata dor cronica associada a atividade repetitiva e sem adequacao ergonomica.",
+    "expected": {
+      "tipo_risco": "afastamento",
+      "risco_juridico": "ALTO",
+      "min_score": 70
+    }
+  },
+  {
+    "id": "C018",
+    "titulo": "Rescisao por acordo entre as partes regular",
+    "texto_caso": "Desligamento por acordo formalizado, com assinatura, pagamento integral e registro documental completo.",
+    "expected": {
+      "tipo_risco": "rescisao",
+      "risco_juridico": "BAIXO",
+      "max_score": 40
+    }
+  },
+  {
+    "id": "C019",
+    "titulo": "Alegacao de discriminacao sem base robusta",
+    "texto_caso": "Colaborador afirma tratamento desigual, mas sem fatos concretos e sem comparativos objetivos.",
+    "expected": {
+      "tipo_risco": "inconclusivo",
+      "risco_juridico": "INCONCLUSIVO",
+      "max_score": 50
+    }
+  },
+  {
+    "id": "C020",
+    "titulo": "Assedio com prova documental e reincidencia",
+    "texto_caso": "Ha e-mails ofensivos, relatos recorrentes da equipe e historico de advertencias ao gestor.",
+    "expected": {
+      "tipo_risco": "assedio_moral",
+      "risco_juridico": "ALTO",
+      "min_score": 85
+    }
+  }
+]

@@ -4,21 +4,10 @@ import re
 
 from banco import (
     criar_tabelas,
-    salvar_analise,
-    listar_empresas,
-    cadastrar_empresa,
-    incrementar_uso,
     obter_uso_usuario,
-    login_usuario,
-    criar_usuario
+    salvar_feedback_resultado_analise,
 )
 
-from insights_service import gerar_insights_empresa
-from relatorio_service import gerar_relatorio_empresa
-
-from analisador_caso import analisar_texto_usuario
-from motor_consultor import analisar_caso
-from ia_consultor import gerar_parecer_juridico
 from ia_chat import gerar_resposta_chat
 
 from pdf_generator import gerar_pdf_parecer
@@ -27,14 +16,64 @@ from plano_service import (
     get_plano_usuario,
     pode_gerar_pdf,
     pode_fazer_analise,
-    get_limite_analises
+    get_limite_analises,
+    get_limite_empresas,
+    pode_cadastrar_empresa,
 )
 
 from gerenciador_sessao import get_sessao
 
-from score_engine import calcular_score
+from application.analise_use_cases import (
+    executar_analise_e_score,
+    gerar_parecer_e_salvar_analise,
+)
+from application.auth_use_cases import (
+    processar_login,
+    processar_cadastro,
+    processar_logout,
+)
+from application.empresa_use_cases import (
+    listar_empresas_usuario,
+    selecionar_empresa,
+    cadastrar_empresa_usuario,
+)
+from application.dashboard_use_cases import gerar_insights_empresa_uc
+from application.billing_use_cases import iniciar_checkout_plano
+from application.subscription_use_cases import obter_status_assinatura
+from application.onboarding_use_cases import obter_onboarding_status, finalizar_onboarding
+from ui.layout import (
+    render_app_theme,
+    render_header,
+    render_premium_card,
+    render_result_intro_card,
+    render_section_title,
+    render_footer,
+)
+from ui.auth_views import render_auth_view
+from ui.empresa_views import render_empresas_sidebar, render_nova_empresa_sidebar
+from ui.insights_views import render_insights_empresa
+from ui.usage_views import render_usage
+from ui.analysis_views import (
+    render_analysis_input,
+    render_score,
+    render_decisao_executiva,
+    render_parecer_sections,
+)
+from ui.chat_views import render_chat_title, render_chat_input, render_chat_historico
+from ui.onboarding_views import (
+    render_onboarding_header,
+    render_onboarding_hint_empresa,
+    render_onboarding_hint_analise,
+    render_onboarding_conclusao,
+    render_jornada_versao_1,
+)
+from ui.pricing_views import render_planos_comparativo
+from ui.billing_views import traduzir_erro_checkout, render_checkout_success
+from ui.subscription_views import render_status_assinatura_card, render_cta_upgrade_free
+from ui.empty_states import render_empty_state_plano_free_limitado
 
 
+# 🔥 LIMPEZA TEXTO IA
 def limpar_texto_ia(texto):
     if not texto:
         return ""
@@ -50,10 +89,12 @@ def limpar_texto_ia(texto):
     return "\n".join(linhas_limpas).strip()
 
 
+# 🔥 VALIDAÇÃO EMAIL
 def email_valido(email):
     return re.match(r"[^@]+@[^@]+\.[^@]+", email)
 
 
+# 🔥 VALIDAÇÃO CNPJ
 def validar_cnpj(cnpj):
     cnpj = ''.join(filter(str.isdigit, cnpj))
 
@@ -78,82 +119,113 @@ def validar_cnpj(cnpj):
 
 
 criar_tabelas()
+
 st.set_page_config(page_title="DP-IA", layout="wide")
+render_app_theme()
 
 
+# =========================
 # LOGIN
+# =========================
 if "user_id" not in st.session_state:
+    if "auth_processing" not in st.session_state:
+        st.session_state["auth_processing"] = False
+    if "auth_pending_action" not in st.session_state:
+        st.session_state["auth_pending_action"] = None
 
-    st.title("🔐 DP-IA | Login")
+    landing_intent = st.session_state.pop("landing_intent", None)
+    default_tab = "Criar conta" if landing_intent == "trial" else "Entrar"
+    banner_text = (
+        "Você está no fluxo de teste grátis. Crie sua conta para começar."
+        if landing_intent == "trial"
+        else None
+    )
 
-    aba = st.radio("Acesso", ["Entrar", "Criar conta"])
+    aba, email, senha, acao_clicada = render_auth_view(
+        default_tab=default_tab,
+        banner_text=banner_text,
+        is_processing=st.session_state["auth_processing"],
+    )
 
-    email = st.text_input("Email")
-    senha = st.text_input("Senha", type="password")
+    if acao_clicada and not st.session_state["auth_processing"]:
+        st.session_state["auth_processing"] = True
+        st.session_state["auth_pending_action"] = aba
+        st.rerun()
 
     if email and not email_valido(email):
         st.warning("Digite um email válido")
 
-    if aba == "Entrar":
-        if st.button("Entrar"):
+    if st.session_state["auth_processing"]:
+        acao_execucao = st.session_state.get("auth_pending_action") or aba
 
-            if not email_valido(email):
-                st.error("Email inválido")
-                st.stop()
+        if acao_execucao == "Entrar":
+            with st.spinner("Carregando dados..."):
+                if not email_valido(email):
+                    st.error("Email inválido")
+                    st.session_state["auth_processing"] = False
+                    st.session_state["auth_pending_action"] = None
+                    st.stop()
 
-            user_id = login_usuario(email, senha)
-            if user_id:
-                st.session_state.user_id = user_id
-                st.rerun()
-            else:
-                st.error("Email ou senha inválidos")
+                if not processar_login(email, senha):
+                    st.error("Não foi possível entrar. Verifique email e senha e tente novamente.")
+                    st.session_state["auth_processing"] = False
+                    st.session_state["auth_pending_action"] = None
 
-    else:
-        if st.button("Criar conta"):
+        else:
+            with st.spinner("Carregando dados..."):
+                if not email_valido(email):
+                    st.error("Digite um email válido")
+                    st.session_state["auth_processing"] = False
+                    st.session_state["auth_pending_action"] = None
+                    st.stop()
 
-            if not email_valido(email):
-                st.error("Digite um email válido")
-                st.stop()
+                if processar_cadastro(email, senha):
+                    st.success("Conta criada com sucesso. Faça login para continuar.")
+                else:
+                    st.error("Não foi possível criar a conta. Esse email pode já estar cadastrado.")
 
-            try:
-                criar_usuario(email, senha)
-                st.success("Conta criada! Faça login.")
-            except:
-                st.error("Email já cadastrado")
+                st.session_state["auth_processing"] = False
+                st.session_state["auth_pending_action"] = None
 
     st.stop()
 
 
 usuario_id = st.session_state.user_id
 sessao = get_sessao()
+plano = get_plano_usuario(usuario_id)
 
 
-# HEADER
-st.markdown("""
-# ⚖️ M&P Consultoria Trabalhista
+# =========================
+# HEADER (ALTERADO)
+# =========================
+render_header()
 
-### Inteligência jurídica para decisões seguras em RH
-""")
-
-st.markdown("""
-<div style="
-padding:20px;
-border-radius:10px;
-background: linear-gradient(90deg, #1e3c72, #2a5298);
-color:white;
-margin-bottom:20px;
-">
-<h3>📊 Gestão de Risco Trabalhista</h3>
-<p>Analise casos, identifique riscos e tome decisões com segurança jurídica.</p>
-</div>
-""", unsafe_allow_html=True)
+# 🔥 CARD PREMIUM
+render_premium_card()
 
 
+# =========================
+# LOGOUT
+# =========================
 if st.sidebar.button("🚪 Sair"):
-    del st.session_state["user_id"]
-    st.rerun()
+    processar_logout()
+
+st.sidebar.markdown(
+    """
+<div class="mp-empty-state" style="margin-top:8px;">
+  <div style="font-weight:700; color:#93c5fd;">Trial comercial</div>
+  <div style="font-size:0.86rem; color:#cbd5e1;">7 dias grátis ou 3 análises grátis para validar resultado real.</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+if st.sidebar.button("🚀 Upgrade Pro/Business", width="stretch", key="sidebar_upgrade_monetizacao"):
+    st.info("Acesse a seção Upgrade Comercial para concluir assinatura.")
 
 
+# =========================
+# MODO
+# =========================
 modo = st.radio(
     "Modo de uso",
     ["🔵 Análise", "🟢 Conversa assistida"],
@@ -161,262 +233,292 @@ modo = st.radio(
 )
 
 
+# =========================
 # EMPRESAS
-st.sidebar.markdown("## 🏢 Empresas")
+# =========================
+empresas = listar_empresas_usuario(usuario_id)
+empresa_selecionada, empresa_id = render_empresas_sidebar(empresas)
+selecionar_empresa(empresa_id)
+total_empresas = len(empresas)
 
-empresas = listar_empresas(usuario_id)
 
-if not empresas:
-    st.sidebar.warning("Nenhuma empresa cadastrada")
-
-empresa_nomes = [e[1] for e in empresas]
-empresa_map = {e[1]: e[0] for e in empresas}
-
-empresa_selecionada = st.sidebar.selectbox(
-    "Selecionar empresa",
-    empresa_nomes if empresa_nomes else ["--"]
+nome_empresa, cnpj_empresa, cidade_empresa, estado_empresa, cadastrar_clicked = (
+    render_nova_empresa_sidebar()
 )
 
-empresa_id = empresa_map.get(empresa_selecionada)
-st.session_state.empresa_id = empresa_id
-
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ➕ Nova empresa")
-
-nome_empresa = st.sidebar.text_input("Nome")
-cnpj_empresa = st.sidebar.text_input("CNPJ")
-cidade_empresa = st.sidebar.text_input("Cidade")
-estado_empresa = st.sidebar.text_input("Estado")
-
-if st.sidebar.button("Cadastrar empresa"):
+if cadastrar_clicked:
 
     if not nome_empresa:
         st.error("Informe o nome da empresa")
         st.stop()
 
     if not validar_cnpj(cnpj_empresa):
-        st.error("CNPJ inválido")
+        st.error("CNPJ inválido. Revise o número informado e tente novamente.")
         st.stop()
 
-    cadastrar_empresa(
+    if not pode_cadastrar_empresa(usuario_id, total_empresas):
+        limite_empresas_plano = get_limite_empresas(plano)
+        st.error(f"Seu plano permite até {limite_empresas_plano} empresa(s).")
+        st.stop()
+
+    cadastrar_empresa_usuario(
         usuario_id,
         nome_empresa,
         cnpj_empresa,
         cidade_empresa,
-        estado_empresa
+        estado_empresa,
     )
 
     st.success("Empresa cadastrada")
     st.rerun()
 
 
-# INSIGHTS
+# =========================
+# INSIGHTS (MANTIDO)
+# =========================
 if empresa_id:
-
-    insights = gerar_insights_empresa(empresa_id)
-
-    if insights:
-        st.markdown("## 📊 Visão Inteligente da Empresa")
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric("Casos", insights["total"])
-        col2.metric("Alto risco", f"{insights['percentual_alto']}%")
-        col3.metric("Problema", insights["problema"])
-
-        if insights["percentual_alto"] > 40:
-            st.error("🚨 Alto risco recorrente")
-        elif insights["percentual_alto"] > 20:
-            st.warning("⚠️ Atenção ao risco")
-        else:
-            st.success("✅ Risco controlado")
-
-        st.markdown("---")
+    insights = gerar_insights_empresa_uc(empresa_id)
+    render_insights_empresa(insights)
 
 
-# DIAGNÓSTICO INTELIGENTE (CORRIGIDO)
-if empresa_id:
-
-    relatorio = gerar_relatorio_empresa(empresa_id)
-
-    if relatorio:
-
-        impacto_rel = relatorio.get("impacto", 0)
-
-        try:
-            impacto_rel = float(impacto_rel)
-        except:
-            impacto_rel = 0
-
-        problema = relatorio.get("problema") or "Não identificado com clareza"
-
-        st.markdown("## 🧠 Diagnóstico Inteligente")
-
-        st.markdown(f"""
-A empresa apresenta padrão recorrente de risco trabalhista.
-
-⚠️ **{relatorio['percentual']}% dos casos são de alto risco**
-
-📌 **Principal problema identificado:**  
-{problema}
-
-💰 **Impacto financeiro estimado:**  
-R$ {impacto_rel:,.2f}
-""")
-
-        st.markdown("---")
-
-
+# =========================
 # USO
-plano = get_plano_usuario()
+# =========================
 uso = obter_uso_usuario(usuario_id)
 limite = get_limite_analises(plano)
 
-st.markdown(f"💼 Plano: {plano}")
-st.markdown(f"📊 Uso: {uso} / {limite}")
+# =========================
+# ONBOARDING
+# =========================
+onboarding_status = obter_onboarding_status(usuario_id, total_empresas, uso)
+onboarding_ativo = onboarding_status.get("ativo", False)
+if onboarding_ativo:
+    render_onboarding_header(onboarding_status.get("etapa_atual", 1))
 
+render_section_title("Resumo Comercial")
+status_assinatura = obter_status_assinatura(usuario_id, plano)
+render_status_assinatura_card(status_assinatura)
+render_jornada_versao_1(total_empresas, uso, status_assinatura)
+if plano == "FREE":
+    if render_cta_upgrade_free():
+        st.info("Escolha abaixo entre Pro ou Business para continuar o upgrade.")
+    render_empty_state_plano_free_limitado()
+render_usage(plano, uso, limite)
+if not pode_gerar_pdf(plano):
+    st.caption("PDF premium disponível apenas nos planos pagos (Pro e Premium).")
 
-# ANÁLISE
-if modo == "🔵 Análise":
+render_section_title("Upgrade Comercial")
+render_planos_comparativo(plano)
+provedor_pagamento = st.selectbox(
+    "Gateway de pagamento",
+    ["ASAAS", "MERCADO_PAGO"],
+    help="Estrutura preparada para integração oficial com gateway brasileiro.",
+)
+col_upgrade_1, col_upgrade_2 = st.columns(2)
+with col_upgrade_1:
+    assinar_pro = st.button("💳 Assinar Pro • R$197", width="stretch")
+with col_upgrade_2:
+    assinar_premium = st.button("💳 Assinar Business • R$397", width="stretch")
 
-    texto_usuario = st.text_area("Descreva o caso:")
-
-    # NOVO BLOCO SALÁRIO
-    st.markdown("### 💰 Simulação financeira (opcional)")
-    mostrar_salario = st.toggle("Informar salário para cálculo mais preciso")
-
-    salario_usuario = None
-
-    if mostrar_salario:
-        salario_usuario = st.number_input(
-            "Salário do colaborador (R$)",
-            min_value=0.0,
-            step=100.0
+if assinar_pro or assinar_premium:
+    plano_destino = "PRO" if assinar_pro else "PREMIUM"
+    checkout_resp = iniciar_checkout_plano(
+        usuario_id=usuario_id,
+        plano=plano_destino,
+        provider=provedor_pagamento,
+    )
+    if checkout_resp.get("ok"):
+        render_checkout_success(
+            plano_destino=plano_destino,
+            checkout_url=checkout_resp.get("checkout_url"),
+            sandbox=checkout_resp.get("sandbox", False),
         )
+    else:
+        erro_amigavel = traduzir_erro_checkout(checkout_resp.get("error", "erro desconhecido"))
+        st.error(erro_amigavel)
 
-    if st.button("🔍 Analisar Caso", use_container_width=True):
+
+# =========================
+# ANÁLISE (ALTERADA VISUAL)
+# =========================
+if modo == "🔵 Análise":
+    render_section_title("Nova Análise")
+
+    if onboarding_ativo and onboarding_status.get("etapa_atual") == 1:
+        render_onboarding_hint_empresa()
+    elif onboarding_ativo and onboarding_status.get("etapa_atual") == 2:
+        render_onboarding_hint_analise()
+    elif onboarding_ativo and onboarding_status.get("etapa_atual") == 3:
+        render_onboarding_conclusao()
+        finalizar_onboarding(usuario_id)
+
+    st.markdown("**Sugestões rápidas**")
+    s1, s2, s3, s4, s5 = st.columns(5)
+    with s1:
+        if st.button("Funcionário processou empresa", width="stretch", key="sug_processo"):
+            st.session_state["analysis_input_prefill"] = (
+                "Funcionário processou a empresa alegando verbas rescisórias e dano moral. "
+                "Quero avaliar risco, defesa e estratégia de acordo."
+            )
+            st.rerun()
+    with s2:
+        if st.button("Pedido de demissão", width="stretch", key="sug_demissao"):
+            st.session_state["analysis_input_prefill"] = (
+                "Funcionário pediu demissão, mas há dúvida sobre estabilidade e documentação. "
+                "Preciso avaliar risco jurídico e próximos passos."
+            )
+            st.rerun()
+    with s3:
+        if st.button("Gestante dispensada", width="stretch", key="sug_gestante"):
+            st.session_state["analysis_input_prefill"] = (
+                "Colaboradora gestante foi dispensada e não recebeu verbas corretamente. "
+                "Preciso de avaliação estratégica de risco e exposição."
+            )
+            st.rerun()
+    with s4:
+        if st.button("Horas extras cobradas", width="stretch", key="sug_hora_extra"):
+            st.session_state["analysis_input_prefill"] = (
+                "Equipe está cobrando horas extras com base em registros de ponto. "
+                "Quero avaliar probabilidade de condenação e faixa de impacto."
+            )
+            st.rerun()
+    with s5:
+        if st.button("Assédio alegado", width="stretch", key="sug_assedio"):
+            st.session_state["analysis_input_prefill"] = (
+                "Há alegação de assédio moral com possíveis testemunhas e mensagens. "
+                "Preciso de parecer estratégico para decisão empresarial."
+            )
+            st.rerun()
+
+    texto_usuario, analisar_clicked = render_analysis_input()
+
+    if analisar_clicked:
 
         if not empresa_id:
-            st.error("Selecione uma empresa")
+            st.error("Selecione uma empresa para iniciar a análise.")
             st.stop()
 
         if not pode_fazer_analise(usuario_id):
-            st.error("Limite atingido")
+            st.markdown(
+                """
+<div class="mp-empty-state">
+  <div style="font-weight:700; color:#93c5fd;">Limite de análises atingido</div>
+  <div style="color:#cbd5e1; font-size:0.9rem;">Faça upgrade para Pro/Business e continue com volume ampliado e PDF premium.</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
             st.stop()
 
-        with st.spinner("🔎 Analisando risco trabalhista..."):
-
-            dados = analisar_texto_usuario(texto_usuario)
-
-            resultado = analisar_caso(
-                dados.get("tipo_caso"),
-                dados
-            )
-
-            impacto_temp = resultado.get("impacto", 0)
-
-            tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
-
-            if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
-                resultado["risco"] = "ALTO"
-
-            score_data = calcular_score({
-                "risco": resultado.get("risco", "BAIXO"),
-                "impacto": impacto_temp,
-                "tem_prova": dados.get("tem_prova", False),
-                "testemunha": dados.get("testemunha", False),
-                "reincidente": dados.get("reincidente", False),
-                "tipo": tipo_para_score
-            })
-
-            score = score_data["score"]
-            probabilidade = score_data["probabilidade_condenacao"]
-            nivel = score_data["nivel"]
-            motivos = score_data["motivos"]
-
-        with st.spinner("⚖️ Gerando parecer jurídico..."):
-
-            parecer = gerar_parecer_juridico(
-                contexto=texto_usuario,
+        with st.status("Analisando risco jurídico...", expanded=True) as status:
+            analise_data = executar_analise_e_score(texto_usuario)
+            status.write("Cruzando evidências...")
+            dados = analise_data["dados"]
+            resultado = analise_data["resultado"]
+            score = analise_data["score"]
+            probabilidade = analise_data["probabilidade"]
+            nivel = analise_data["nivel"]
+            motivos = analise_data["motivos"]
+            status.write("Calculando exposição...")
+            parecer = gerar_parecer_e_salvar_analise(
+                texto_usuario=texto_usuario,
+                usuario_id=usuario_id,
+                empresa_id=empresa_id,
                 dados=dados,
                 resultado=resultado,
                 score=score,
-                probabilidade=probabilidade
+                probabilidade=probabilidade,
+                nivel=nivel,
+                motivos=motivos,
             )
+            status.write("Montando estratégia...")
+            status.update(label="Parecer estratégico pronto", state="complete")
 
-        incrementar_uso(usuario_id)
+        render_result_intro_card()
+        render_section_title("Relatório Executivo")
 
         def cor_score(score):
             if score >= 80:
-                return "🔴 Alto"
+                return "🔴"
             elif score >= 60:
-                return "🟠 Moderado"
+                return "🟠"
             elif score >= 40:
-                return "🟡 Atenção"
+                return "🟡"
             else:
-                return "🟢 Baixo"
+                return "🟢"
 
-        st.markdown("## 📊 Índice de Risco Trabalhista (DP-IA)")
+        render_score(score, probabilidade, nivel, cor_score)
+        render_decisao_executiva(score)
+        render_parecer_sections(parecer, limpar_texto_ia)
+        st.markdown(
+            """
+<div class="mp-empty-state">
+  <div style="font-weight:700; color:#93c5fd;">Quer escalar decisões com padrão premium?</div>
+  <div style="color:#cbd5e1; font-size:0.9rem;">Upgrade para Pro/Business e libere PDF executivo, mais análises e prioridade operacional.</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        cta_result_1, cta_result_2 = st.columns(2)
+        with cta_result_1:
+            if st.button("🚀 Upgrade para Pro", width="stretch", key="result_upgrade_pro"):
+                st.info("Use a seção Upgrade Comercial para concluir assinatura Pro.")
+        with cta_result_2:
+            if st.button("🏢 Upgrade para Business", width="stretch", key="result_upgrade_business"):
+                st.info("Use a seção Upgrade Comercial para concluir assinatura Business.")
 
-        col1, col2, col3 = st.columns(3)
+        st.markdown("### Coleta de Feedback do Resultado")
+        schema_version = str(parecer.get("parecer_schema_version", "desconhecida"))
+        feedback_signature = (
+            f"{usuario_id}:{empresa_id}:{score}:{nivel}:{schema_version}:{resultado.get('risco', '')}:{resultado.get('pontuacao', '')}"
+        )
+        feedback_salvo = st.session_state.get("feedback_resultado_salvo") == feedback_signature
 
-        with col1:
-            st.metric("Score", f"{score}/100")
+        if not feedback_salvo:
+            with st.form("coleta_feedback_resultado", clear_on_submit=False):
+                ajudou = st.radio(
+                    "A resposta ajudou?",
+                    options=["Sim", "Não"],
+                    horizontal=True,
+                )
+                risco_coerente = st.radio(
+                    "O risco parece coerente com o caso?",
+                    options=["Sim", "Não"],
+                    horizontal=True,
+                )
+                recomendacao_util = st.radio(
+                    "A recomendação foi útil para decisão?",
+                    options=["Sim", "Não"],
+                    horizontal=True,
+                )
+                nota_geral = st.slider("Nota geral do resultado (1 a 5)", 1, 5, 4)
+                observacoes = st.text_area(
+                    "Comentário opcional para calibração futura",
+                    placeholder="Ex: faltou considerar documento X ou o risco ficou acima do esperado.",
+                    height=90,
+                )
+                enviar_feedback = st.form_submit_button(
+                    "Salvar feedback para calibração",
+                    width="stretch",
+                )
 
-        with col2:
-            st.metric("Probabilidade de Condenação", f"{probabilidade}%")
-
-        with col3:
-            st.metric("Nível de Risco", cor_score(score))
-
-        st.markdown("### 🧠 Fatores que influenciaram o score")
-
-        for m in motivos:
-            impacto_m = m["impacto"]
-            sinal = "+" if impacto_m >= 0 else "-"
-            st.write(f"{sinal}{impacto_m} → {m['fator']}")
-
-        st.markdown("---")
-
-        st.markdown("## 🧾 Análise do Caso")
-        st.markdown(limpar_texto_ia(parecer.get("diagnostico")))
-
-        st.markdown("## 💰 Impacto Financeiro")
-
-        # NOVO CÁLCULO
-        impacto = 0
-
-        if salario_usuario and salario_usuario > 0:
-
-            fgts = salario_usuario * 0.08 * 12
-            multa_fgts = fgts * 0.4
-            ferias = salario_usuario + (salario_usuario / 3)
-            decimo = salario_usuario
-
-            impacto = fgts + multa_fgts + ferias + decimo
-
+                if enviar_feedback:
+                    salvar_feedback_resultado_analise(
+                        usuario_id=usuario_id,
+                        empresa_id=empresa_id,
+                        ajudou=(ajudou == "Sim"),
+                        risco_coerente=(risco_coerente == "Sim"),
+                        recomendacao_util=(recomendacao_util == "Sim"),
+                        nota_geral=nota_geral,
+                        score=score,
+                        nivel=nivel,
+                        parecer_schema_version=schema_version,
+                        observacoes=observacoes.strip(),
+                    )
+                    st.session_state["feedback_resultado_salvo"] = feedback_signature
+                    st.success("Feedback salvo com sucesso. Obrigado por ajudar na calibração do DP-IA.")
         else:
-            impacto = parecer.get("impacto_financeiro", 0)
-
-        if impacto < 100:
-            impacto = 0
-
-        st.markdown(f"### R$ {impacto:,.2f}")
-
-        with st.expander("📊 Ver como o valor foi calculado"):
-
-            if salario_usuario and salario_usuario > 0:
-                st.write(f"Salário base: R$ {salario_usuario:,.2f}")
-                st.write(f"FGTS (12 meses): R$ {fgts:,.2f}")
-                st.write(f"Multa FGTS (40%): R$ {multa_fgts:,.2f}")
-                st.write(f"Férias + 1/3: R$ {ferias:,.2f}")
-                st.write(f"13º salário: R$ {decimo:,.2f}")
-            else:
-                st.write("Valor estimado com base em padrões de mercado.")
-
-        st.markdown("## 📌 Orientação Estratégica")
-        st.markdown(limpar_texto_ia(parecer.get("recomendacao")))
+            st.caption("Feedback desta análise já foi registrado.")
 
         if pode_gerar_pdf(plano):
             pdf_path = gerar_pdf_parecer(
@@ -426,31 +528,15 @@ if modo == "🔵 Análise":
             )
 
             with open(pdf_path, "rb") as f:
-                st.download_button("📄 Baixar PDF", f)
+                st.download_button("📄 Baixar PDF", f, file_name="parecer.pdf")
 
-        salvar_analise(
-            empresa_id,
-            dados.get("tipo_caso"),
-            parecer.get("risco"),
-            resultado.get("pontuacao"),
-            dados,
-            {
-                **resultado,
-                "score": score,
-                "probabilidade": probabilidade,
-                "nivel": nivel,
-                "motivos": motivos
-            },
-            parecer
-        )
-
-
+# =========================
 # CHAT
+# =========================
 else:
-
-    st.subheader("💬 Consultor Trabalhista")
-
-    user_input = st.chat_input("Digite sua dúvida...")
+    render_section_title("Conversa Assistida")
+    render_chat_title()
+    user_input = render_chat_input()
 
     if user_input:
         sessao.adicionar("user", user_input)
@@ -462,20 +548,10 @@ else:
         sessao.adicionar("assistant", resposta)
         st.rerun()
 
-    for msg in sessao.historico:
-        with st.chat_message(msg["role"]):
-            st.write(msg["texto"])
+    render_chat_historico(sessao.historico)
 
 
-# FOOTER
-st.markdown("---")
-
-st.caption("""
-© 2026 Matheus Filadelfo Pires da Costa
-
-⚖️ M&P Consultoria Trabalhista  
-Inteligência aplicada à gestão de risco em RH  
-
-Todos os direitos reservados.  
-Este sistema fornece apoio à decisão e não substitui análise jurídica formal.
-""")
+# =========================
+# DIREITOS (ALTERADO)
+# =========================
+render_footer()

@@ -1,4 +1,8 @@
-from banco import obter_uso_usuario
+from banco import (
+    obter_uso_usuario,
+    obter_plano_usuario_db,
+    garantir_plano_usuario,
+)
 
 PLANO_FREE = "FREE"
 PLANO_PRO = "PRO"
@@ -23,13 +27,18 @@ LIMITES = {
 }
 
 
-def get_plano_usuario():
-    # depois vamos buscar do banco
+# 🔥 CORRIGIDO
+def get_plano_usuario(usuario_id):
+    plano = obter_plano_usuario_db(usuario_id)
+    if plano in LIMITES:
+        return plano
+    garantir_plano_usuario(usuario_id, plano_default=PLANO_FREE)
     return PLANO_FREE
 
 
+# 🔥 CORRIGIDO
 def pode_fazer_analise(usuario_id):
-    plano = get_plano_usuario()
+    plano = get_plano_usuario(usuario_id)
     uso = obter_uso_usuario(usuario_id)
     limite = LIMITES[plano]["analises"]
 
@@ -42,3 +51,13 @@ def get_limite_analises(plano):
 
 def pode_gerar_pdf(plano):
     return LIMITES[plano]["pdf"]
+
+
+def get_limite_empresas(plano):
+    return LIMITES[plano]["empresas"]
+
+
+def pode_cadastrar_empresa(usuario_id, total_empresas_atual):
+    plano = get_plano_usuario(usuario_id)
+    limite_empresas = get_limite_empresas(plano)
+    return total_empresas_atual < limite_empresas

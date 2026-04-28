@@ -65,6 +65,68 @@ def criar_tabelas():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS assinaturas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER UNIQUE,
+        plano TEXT DEFAULT 'FREE',
+        status TEXT DEFAULT 'active',
+        billing_cycle TEXT DEFAULT 'monthly',
+        payment_provider TEXT,
+        external_customer_id TEXT,
+        external_subscription_id TEXT,
+        next_billing_at TEXT,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS checkout_transacoes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER,
+        plano_destino TEXT,
+        provider TEXT,
+        status TEXT,
+        checkout_url TEXT,
+        external_reference TEXT UNIQUE,
+        external_checkout_id TEXT,
+        external_subscription_id TEXT,
+        valor REAL,
+        created_at TEXT,
+        updated_at TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS onboarding_usuario (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER UNIQUE,
+        etapa_atual INTEGER DEFAULT 1,
+        concluido INTEGER DEFAULT 0,
+        criado_em TEXT,
+        atualizado_em TEXT,
+        concluido_em TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS feedback_resultado_analise (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER,
+        empresa_id INTEGER,
+        ajudou INTEGER,
+        risco_coerente INTEGER,
+        recomendacao_util INTEGER,
+        nota_geral INTEGER,
+        score INTEGER,
+        nivel TEXT,
+        parecer_schema_version TEXT,
+        observacoes TEXT,
+        criado_em TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -82,6 +144,32 @@ def criar_usuario(email, senha):
     INSERT INTO usuarios (email, senha_hash)
     VALUES (?, ?)
     """, (email, senha_hash))
+
+    usuario_id = cursor.lastrowid
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+    INSERT OR IGNORE INTO assinaturas (
+        usuario_id,
+        plano,
+        status,
+        billing_cycle,
+        created_at,
+        updated_at
+    )
+    VALUES (?, 'FREE', 'active', 'monthly', ?, ?)
+    """, (usuario_id, agora, agora))
+
+    cursor.execute("""
+    INSERT OR IGNORE INTO onboarding_usuario (
+        usuario_id,
+        etapa_atual,
+        concluido,
+        criado_em,
+        atualizado_em
+    )
+    VALUES (?, 1, 0, ?, ?)
+    """, (usuario_id, agora, agora))
 
     conn.commit()
     conn.close()
@@ -108,6 +196,15 @@ def login_usuario(email, senha):
         return user_id
 
     return None
+
+
+def obter_email_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM usuarios WHERE id = ?", (usuario_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 
 # =========================
@@ -201,6 +298,249 @@ def listar_empresas(usuario_id):
     return dados
 
 
+def contar_empresas_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM empresas WHERE usuario_id = ?", (usuario_id,))
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total
+
+
+def obter_plano_usuario_db(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT plano FROM assinaturas WHERE usuario_id = ?", (usuario_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def garantir_plano_usuario(usuario_id, plano_default="FREE"):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+    INSERT OR IGNORE INTO assinaturas (
+        usuario_id,
+        plano,
+        status,
+        billing_cycle,
+        created_at,
+        updated_at
+    )
+    VALUES (?, ?, 'active', 'monthly', ?, ?)
+    """, (usuario_id, plano_default, agora, agora))
+
+    conn.commit()
+    conn.close()
+
+
+def definir_plano_usuario(usuario_id, plano, status="active"):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    garantir_plano_usuario(usuario_id, plano_default=plano)
+
+    cursor.execute("""
+    UPDATE assinaturas
+    SET plano = ?, status = ?, updated_at = ?
+    WHERE usuario_id = ?
+    """, (plano, status, agora, usuario_id))
+
+    conn.commit()
+    conn.close()
+
+
+def criar_checkout_transacao(
+    usuario_id,
+    plano_destino,
+    provider,
+    status,
+    checkout_url,
+    external_reference,
+    external_checkout_id=None,
+    external_subscription_id=None,
+    valor=0.0,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+    INSERT INTO checkout_transacoes (
+        usuario_id,
+        plano_destino,
+        provider,
+        status,
+        checkout_url,
+        external_reference,
+        external_checkout_id,
+        external_subscription_id,
+        valor,
+        created_at,
+        updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        usuario_id,
+        plano_destino,
+        provider,
+        status,
+        checkout_url,
+        external_reference,
+        external_checkout_id,
+        external_subscription_id,
+        valor,
+        agora,
+        agora,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def obter_checkout_por_referencia(external_reference):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT id, usuario_id, plano_destino, provider, status
+    FROM checkout_transacoes
+    WHERE external_reference = ?
+    """, (external_reference,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def atualizar_checkout_status(
+    external_reference,
+    status,
+    external_subscription_id=None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+    UPDATE checkout_transacoes
+    SET status = ?,
+        external_subscription_id = COALESCE(?, external_subscription_id),
+        updated_at = ?
+    WHERE external_reference = ?
+    """, (status, external_subscription_id, agora, external_reference))
+
+    conn.commit()
+    conn.close()
+
+
+def obter_assinatura_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT plano, status, next_billing_at
+    FROM assinaturas
+    WHERE usuario_id = ?
+    """, (usuario_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "plano": row[0],
+        "status": row[1],
+        "next_billing_at": row[2],
+    }
+
+
+def obter_ultimo_checkout_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT plano_destino, status, created_at
+    FROM checkout_transacoes
+    WHERE usuario_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (usuario_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "plano_destino": row[0],
+        "status": row[1],
+        "created_at": row[2],
+    }
+
+
+def obter_onboarding_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT etapa_atual, concluido, concluido_em
+    FROM onboarding_usuario
+    WHERE usuario_id = ?
+    """, (usuario_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "etapa_atual": int(row[0] or 1),
+        "concluido": bool(row[1]),
+        "concluido_em": row[2],
+    }
+
+
+def garantir_onboarding_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+    INSERT OR IGNORE INTO onboarding_usuario (
+        usuario_id,
+        etapa_atual,
+        concluido,
+        criado_em,
+        atualizado_em
+    )
+    VALUES (?, 1, 0, ?, ?)
+    """, (usuario_id, agora, agora))
+    conn.commit()
+    conn.close()
+
+
+def atualizar_onboarding_etapa(usuario_id, etapa_atual):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+    UPDATE onboarding_usuario
+    SET etapa_atual = ?, atualizado_em = ?
+    WHERE usuario_id = ? AND concluido = 0
+    """, (int(etapa_atual), agora, usuario_id))
+    conn.commit()
+    conn.close()
+
+
+def concluir_onboarding_usuario(usuario_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+    UPDATE onboarding_usuario
+    SET etapa_atual = 3,
+        concluido = 1,
+        atualizado_em = ?,
+        concluido_em = ?
+    WHERE usuario_id = ?
+    """, (agora, agora, usuario_id))
+    conn.commit()
+    conn.close()
+
+
 # =========================
 # ANALISES
 # =========================
@@ -242,5 +582,54 @@ def salvar_analise(
         versao_ia
     ))
 
+    conn.commit()
+    conn.close()
+
+
+def salvar_feedback_resultado_analise(
+    usuario_id,
+    empresa_id,
+    ajudou,
+    risco_coerente,
+    recomendacao_util,
+    nota_geral,
+    score=None,
+    nivel=None,
+    parecer_schema_version=None,
+    observacoes="",
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO feedback_resultado_analise (
+            usuario_id,
+            empresa_id,
+            ajudou,
+            risco_coerente,
+            recomendacao_util,
+            nota_geral,
+            score,
+            nivel,
+            parecer_schema_version,
+            observacoes,
+            criado_em
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            usuario_id,
+            empresa_id,
+            int(bool(ajudou)),
+            int(bool(risco_coerente)),
+            int(bool(recomendacao_util)),
+            int(nota_geral),
+            score,
+            nivel,
+            parecer_schema_version,
+            observacoes,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
     conn.commit()
     conn.close()

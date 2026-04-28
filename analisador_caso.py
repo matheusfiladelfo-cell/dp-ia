@@ -16,10 +16,51 @@ def classificar_por_regra(texto):
 
     texto_lower = texto.lower()
 
-    if any(p in texto_lower for p in ["demitir", "demissao", "dispensa"]):
+    # 🔥 NORMALIZAÇÃO DE ACENTOS (CORREÇÃO)
+    texto_lower = (
+        texto_lower
+        .replace("á", "a")
+        .replace("ã", "a")
+        .replace("â", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+
+    # 🔥 PEDIDO DE DEMISSÃO (PRIORIDADE MÁXIMA)
+    if any(p in texto_lower for p in [
+        "pediu demissao",
+        "pedido de demissao",
+        "pediu a conta",
+        "pedido demissao",
+        "quis sair",
+        "decidiu sair",
+        "saiu da empresa"
+    ]):
+        return "pedido_demissao"
+
+    # RESCISÃO
+    if any(p in texto_lower for p in [
+        "demitir",
+        "demissao",
+        "dispensa",
+        "foi demitido",
+        "empresa demitiu"
+    ]):
         return "rescisao"
 
-    if any(p in texto_lower for p in ["afastado", "atestado", "inss"]):
+    # AFASTAMENTO
+    if any(p in texto_lower for p in [
+        "afastado",
+        "atestado",
+        "inss",
+        "licenca"
+    ]):
         return "afastamento"
 
     return None
