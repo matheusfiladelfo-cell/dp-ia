@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from analisador_caso import analisar_texto_usuario
 from ia_consultor import gerar_parecer_juridico
 from motor_consultor import analisar_caso
-from score_engine import calcular_score
+from score_engine import calcular_score, tipo_efetivo_para_score
 
 
 RISK_RANK = {
@@ -110,7 +110,15 @@ def run():
         dados = analisar_texto_usuario(entrada)
         resultado = analisar_caso(dados.get("tipo_caso"), dados)
 
-        tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
+        resultado = dict(resultado)
+        if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
+            resultado["risco"] = "ALTO"
+        tipo_para_score = tipo_efetivo_para_score(dados)
+        if dados.get("tipo_caso") == "pedido_demissao":
+            tipo_para_score = "pedido_demissao"
+            resultado["risco"] = "BAIXO"
+        if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
+            resultado["risco"] = "ALTO"
         score_data = calcular_score(
             {
                 "risco": resultado.get("risco", "BAIXO"),

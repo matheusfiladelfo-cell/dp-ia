@@ -47,3 +47,10 @@ Thumbs.db
 # CACHE / TEMP
 # =========================
 .cache/
+
+# =========================
+# DADOS LOCAIS / EXPORTAÇÕES (não versionar)
+# =========================
+leads.csv
+resultado_100.csv
+resultado_100.txt

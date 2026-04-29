@@ -4,7 +4,7 @@ import pandas as pd
 import altair as alt
 import json
 
-from banco import criar_tabelas, listar_empresas
+from banco import criar_tabelas, listar_empresas, usuario_pode_acessar_plataforma
 from plano_service import get_plano_usuario
 from ui.theme import apply_global_theme
 from ui.empty_states import (
@@ -107,6 +107,10 @@ usuario_id = st.session_state.get("user_id")
 if not usuario_id:
     st.warning("Faça login para acessar o Dashboard Executivo.")
     st.stop()
+
+if not usuario_pode_acessar_plataforma(usuario_id):
+    del st.session_state["user_id"]
+    st.rerun()
 
 # ===============================
 # EMPRESA (🔥 AGORA FUNCIONA SEM APP)

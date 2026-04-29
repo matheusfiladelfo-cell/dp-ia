@@ -6,6 +6,7 @@ from banco import (
     criar_tabelas,
     obter_uso_usuario,
     salvar_feedback_resultado_analise,
+    usuario_pode_acessar_plataforma,
 )
 
 from ia_chat import gerar_resposta_chat
@@ -191,6 +192,10 @@ if "user_id" not in st.session_state:
 
 
 usuario_id = st.session_state.user_id
+if not usuario_pode_acessar_plataforma(usuario_id):
+    del st.session_state["user_id"]
+    st.rerun()
+
 sessao = get_sessao()
 plano = get_plano_usuario(usuario_id)
 

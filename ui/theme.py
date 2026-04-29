@@ -197,3 +197,16 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
 """,
         unsafe_allow_html=True,
     )
+
+    try:
+        from ui import admin_views
+
+        uid = st.session_state.get("user_id")
+        email = None
+        if uid is not None:
+            from banco import obter_email_usuario
+
+            email = obter_email_usuario(uid)
+        admin_views.apply_sidebar_admin_visibility(email)
+    except Exception:
+        pass

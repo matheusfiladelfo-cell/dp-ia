@@ -1,5 +1,6 @@
 from motor_rescisao_profissional import analisar_rescisao_profissional
 import re
+from score_engine import hard_rules_from_texto
 from motor_afastamento import (
     classificar_beneficio,
     calcular_responsabilidade_pagamento,
@@ -32,88 +33,8 @@ def _detectar_lacunas_criticas(dados):
 
 
 def _detectar_hard_rule_juridica(texto):
-    # Estado 100% local por execução para evitar qualquer vazamento entre casos.
-    texto = str(texto or "").lower()
-    termos_gestante = ["gestante", "gravidez", "grávida", "gravida", "gestação", "gestacao"]
-    termos_desligamento = ["demissão", "demissao", "desligamento", "mandei embora", "dispensa", "dispensada", "dispensado", "dispensei"]
-    termos_verbas_nao_pagas = [
-        "não paguei rescisão",
-        "nao paguei rescisao",
-        "sem pagar nada",
-        "sem acerto",
-        "verbas não pagas",
-        "verbas nao pagas",
-        "verbas rescisórias não pagas",
-        "verbas rescisorias nao pagas",
-    ]
-    termos_sem_prova = ["sem prova", "sem documento", "sem testemunha", "nao tenho prova", "não tenho prova"]
-    termos_sem_registro = ["sem carteira", "sem registro", "trabalhou sem registrar"]
-    termos_acidente = ["acidente", "acidente de trabalho", "machucou", "queda"]
-    termos_sem_cat = ["não abriu cat", "nao abriu cat", "sem cat", "nao fiz cat", "não fiz cat"]
-    termos_assedio = ["assédio", "assedio"]
-    termos_provas_assedio = ["prints", "print", "áudio", "audio", "testemunha"]
-    termos_horas_extras = ["hora extra todo dia", "horas extras", "jornada excessiva", "sem ponto"]
-    termos_pedido_demissao = ["pedido de demissão", "pedido de demissao", "pediu a conta", "pediu demissao"]
-    termos_quitacao = ["paguei tudo", "recibos", "documentos", "quitação total", "quitacao total"]
-    termos_fgts_atraso = ["sem fgts", "fgts atrasado", "fgts em atraso", "fgts não recolhido", "fgts nao recolhido"]
-    termos_pj_subordinado = ["contrato pj", "pj", "pessoa jurídica", "pessoa juridica"]
-    termos_subordinacao = ["batia ponto", "subordinação", "subordinacao", "chefe direto", "ordens diretas"]
-    termos_terceirizado = ["terceirizado", "terceirizada"]
-    termos_ferias_vencidas = ["férias vencidas", "ferias vencidas", "férias não pagas", "ferias nao pagas"]
-    termos_acao_judicial = ["ação judicial", "acao judicial", "entrou na justiça", "entrou na justica", "processo trabalhista"]
-    termos_peticao = ["petição inicial", "peticao inicial", "inicial", "documento da ação", "documento da acao"]
-    termos_banco_horas_sem_assinatura = ["banco de horas sem assinatura", "banco de horas sem assinar", "banco de horas não assinado", "banco de horas nao assinado"]
-    termos_salario_picado = ["salário picado", "salario picado", "pagamento picado", "pago picado", "salario pago picado"]
-    termos_recorrencia = ["vários meses", "varios meses", "recorrente", "todo mês", "todo mes", "sempre"]
-    termos_pagamento_por_fora = ["paguei por fora", "pagamento por fora", "por fora varios meses", "por fora vários meses"]
-    termos_jornada_sem_folga = ["domingo sem folga", "trabalhava domingo sem folga", "sem folga semanal"]
-    termos_assedio_indicios = ["humilhava", "humilha", "constrangimento", "assédio", "assedio", "gerente humilhava"]
-
-    gestante_dispensada = any(t in texto for t in termos_gestante) and any(t in texto for t in termos_desligamento)
-    verbas_nao_pagas = any(t in texto for t in termos_verbas_nao_pagas)
-    justa_causa_sem_prova = "justa causa" in texto and any(t in texto for t in termos_sem_prova)
-    acidente_sem_cat = any(t in texto for t in termos_acidente) and any(t in texto for t in termos_sem_cat)
-    assedio_com_provas = any(t in texto for t in termos_assedio) and any(t in texto for t in termos_provas_assedio)
-    horas_extras_habituais = any(t in texto for t in termos_horas_extras)
-    horas_extras_contexto_alto = ("hora extra todo dia" in texto and "sem ponto" in texto) or ("jornada excessiva" in texto and "sem ponto" in texto)
-    pedido_demissao_quitado = any(t in texto for t in termos_pedido_demissao) and any(t in texto for t in termos_quitacao)
-    fgts_em_atraso = any(t in texto for t in termos_fgts_atraso) and ("6 meses" in texto or "7 meses" in texto or "8 meses" in texto or "9 meses" in texto or "1 ano" in texto or "12 meses" in texto)
-    pj_com_subordinacao = any(t in texto for t in termos_pj_subordinado) and any(t in texto for t in termos_subordinacao)
-    terceirizado_subordinado = any(t in texto for t in termos_terceirizado) and any(t in texto for t in termos_subordinacao)
-    ferias_vencidas_nao_pagas = any(t in texto for t in termos_ferias_vencidas)
-    rescisao_atrasada_10d = ("rescisao atrasou" in texto or "rescisão atrasou" in texto or "atraso rescisao" in texto or "atraso rescisão" in texto) and any(
-        token in texto for token in ["11 dias", "12 dias", "13 dias", "14 dias", "15 dias", "20 dias", "30 dias"]
-    )
-    acao_judicial_sem_peticao = any(t in texto for t in termos_acao_judicial) and not any(t in texto for t in termos_peticao)
-    banco_horas_sem_assinatura = any(t in texto for t in termos_banco_horas_sem_assinatura)
-    salario_picado_recorrente = any(t in texto for t in termos_salario_picado) and (
-        any(t in texto for t in termos_recorrencia) or "salario pago picado" in texto
-    )
-    pagamento_por_fora_recorrente = any(t in texto for t in termos_pagamento_por_fora)
-    jornada_sem_folga = any(t in texto for t in termos_jornada_sem_folga)
-    assedio_indicios = any(t in texto for t in termos_assedio_indicios)
-
-    return {
-        "gestante_dispensada": gestante_dispensada,
-        "verbas_nao_pagas": verbas_nao_pagas,
-        "justa_causa_sem_prova": justa_causa_sem_prova,
-        "acidente_sem_cat": acidente_sem_cat,
-        "assedio_com_provas": assedio_com_provas,
-        "horas_extras_habituais": horas_extras_habituais,
-        "horas_extras_contexto_alto": horas_extras_contexto_alto,
-        "pedido_demissao_quitado": pedido_demissao_quitado,
-        "fgts_em_atraso": fgts_em_atraso,
-        "pj_com_subordinacao": pj_com_subordinacao,
-        "terceirizado_subordinado": terceirizado_subordinado,
-        "ferias_vencidas_nao_pagas": ferias_vencidas_nao_pagas,
-        "rescisao_atrasada_10d": rescisao_atrasada_10d,
-        "acao_judicial_sem_peticao": acao_judicial_sem_peticao,
-        "banco_horas_sem_assinatura": banco_horas_sem_assinatura,
-        "salario_picado_recorrente": salario_picado_recorrente,
-        "pagamento_por_fora_recorrente": pagamento_por_fora_recorrente,
-        "jornada_sem_folga": jornada_sem_folga,
-        "assedio_indicios": assedio_indicios,
-    }
+    """Delega para score_engine (fonte única da lógica de hard rules)."""
+    return hard_rules_from_texto(str(texto or ""))
 
 
 def _extrair_tempo_meses(texto):
@@ -310,6 +231,21 @@ def _matriz_acidente(tipo_risco, texto, lacunas):
     e_fortes, e_moderadas = _coletar_evidencias_acidente(texto)
     mitigadores = _coletar_mitigadores(texto)
 
+    nexo_incerto = any(
+        t in texto
+        for t in (
+            "duvidoso",
+            "nao fala se",
+            "não fala se",
+            "trabalho ou casa",
+            "nao sei se foi",
+            "não sei se foi",
+            "sem nexo",
+            "nexo duvidoso",
+            "pode ter sido em casa",
+        )
+    )
+
     if tipo_risco == "acidente_trabalho" and "cat" in texto and "leve" in texto:
         return {
             "risco": "MÉDIO",
@@ -318,7 +254,13 @@ def _matriz_acidente(tipo_risco, texto, lacunas):
             "evidencias": e_fortes + e_moderadas + ["cat_emitida", "acidente_leve"],
         }
 
-    if tipo_risco == "acidente_trabalho" and len(e_fortes) >= 2 and "leve" not in texto and not mitigadores:
+    if (
+        tipo_risco == "acidente_trabalho"
+        and len(e_fortes) >= 2
+        and "leve" not in texto
+        and not mitigadores
+        and not nexo_incerto
+    ):
         return {
             "risco": "ALTO",
             "pontuacao": 85,
@@ -327,12 +269,12 @@ def _matriz_acidente(tipo_risco, texto, lacunas):
         }
 
     if tipo_risco == "acidente_trabalho" and (e_fortes or e_moderadas):
-        if len(lacunas) >= 2:
+        if nexo_incerto or len(lacunas) >= 2:
             return {
                 "risco": "INCONCLUSIVO",
-                "pontuacao": 35,
-                "racional": "Indícios de acidente sem contexto mínimo para classificar risco alto.",
-                "evidencias": e_fortes + e_moderadas,
+                "pontuacao": 38,
+                "racional": "Indícios de evento físico sem nexo ocupacional claro no relato; priorizar esclarecimento.",
+                "evidencias": e_fortes + e_moderadas + mitigadores,
             }
         return {
             "risco": "MÉDIO",
@@ -345,6 +287,61 @@ def _matriz_acidente(tipo_risco, texto, lacunas):
 
 
 def _fallback_contextual(texto, lacunas):
+    indicadores_litigio = [
+        "ação judicial",
+        "acao judicial",
+        "processo trabalhista",
+        "reclamação trabalhista",
+        "reclamacao trabalhista",
+        "justiça do trabalho",
+        "justica do trabalho",
+        "audiência trabalhista",
+        "audiencia trabalhista",
+        "execução trabalhista",
+        "execucao trabalhista",
+        "vara do trabalho",
+        "vara trabalhista",
+        "entrei na justiça",
+        "entrei na justica",
+        "meti processo",
+        "acionei advogado",
+        "advogado acionei",
+        "audiência marcada",
+        "audiencia marcada",
+        "reclamatória",
+        "reclamatoria",
+        "fui processado",
+        "processo correndo",
+        "processo tramitando",
+        "notificação judicial",
+        "notificacao judicial",
+        "advogado entrou com ação",
+        "advogado entrou com acao",
+        "entrou com a reclamação",
+        "entrou com a reclamacao",
+        "mandado de segurança",
+        "mandado de seguranca",
+        "ação civil",
+        "acao civil",
+        "ação rescisória",
+        "acao rescisoria",
+        "cumprimento de sentença",
+        "cumprimento de sentenca",
+        "liquidação de sentença",
+        "liquidacao de sentenca",
+        "impugnação ao calculo",
+        "impugnacao ao calculo",
+        "perito judicial",
+        "ministerio publico do trabalho",
+        "ministério público do trabalho",
+    ]
+    if any(t in texto for t in indicadores_litigio):
+        return (
+            "MÉDIO",
+            52,
+            "Litígio trabalhista formalizado ou em curso demanda condução jurídica e cenário de custo.",
+        )
+
     indicadores_medio = [
         "discussão", "discussao", "conflito",
         "advertência", "advertencia",

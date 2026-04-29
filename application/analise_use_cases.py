@@ -2,7 +2,7 @@ from analisador_caso import analisar_texto_usuario
 from banco import incrementar_uso, salvar_analise
 from ia_consultor import gerar_parecer_juridico
 from motor_consultor import analisar_caso
-from score_engine import calcular_score
+from score_engine import calcular_score, tipo_efetivo_para_score
 
 
 def executar_analise_e_score(texto_usuario):
@@ -15,12 +15,10 @@ def executar_analise_e_score(texto_usuario):
 
     impacto_temp = resultado.get("impacto", 0)
 
-    tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
-
     if dados.get("tipo_risco") in ["assedio_moral", "acidente_trabalho"]:
         resultado["risco"] = "ALTO"
 
-    tipo_para_score = dados.get("tipo_risco") or dados.get("tipo_caso") or "geral"
+    tipo_para_score = tipo_efetivo_para_score(dados)
 
     # Regra de negocio mantida para nao alterar comportamento.
     if dados.get("tipo_caso") == "pedido_demissao":
@@ -38,6 +36,9 @@ def executar_analise_e_score(texto_usuario):
             "testemunha": dados.get("testemunha", False),
             "reincidente": dados.get("reincidente", False),
             "tipo": tipo_para_score,
+            "texto": texto_usuario,
+            "descricao": texto_usuario,
+            "tempo_empresa_meses": dados.get("tempo_empresa_meses") or 0,
         }
     )
 

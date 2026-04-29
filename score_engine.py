@@ -3,6 +3,23 @@
 import re
 
 
+def tipo_efetivo_para_score(dados):
+    """
+    Combina classificador (tipo_risco) e regras textuais (tipo_caso).
+    Evita que tipo_risco='geral' — típico quando a IA é genérica — silencie
+    rescisão, hora extra, etc. detectadas por palavras-chave no analisador.
+    """
+    if not isinstance(dados, dict):
+        return "geral"
+    tc = dados.get("tipo_caso")
+    tr = str(dados.get("tipo_risco") or "").strip().lower()
+    if tc == "pedido_demissao":
+        return "pedido_demissao"
+    if tr in ("geral", "inconclusivo", ""):
+        return tc or tr or "geral"
+    return tr or tc or "geral"
+
+
 def normalizar_risco(risco):
     if isinstance(risco, (int, float)):
         return min(max(float(risco), 0.0), 1.0)
@@ -90,22 +107,90 @@ def _detectar_hard_rule_juridica(case_data):
     termos_sem_cat = ["não abriu cat", "nao abriu cat", "sem cat", "nao fiz cat", "não fiz cat"]
     termos_assedio = ["assédio", "assedio"]
     termos_provas_assedio = ["prints", "print", "áudio", "audio", "testemunha"]
-    termos_horas_extras = ["hora extra todo dia", "horas extras", "jornada excessiva", "sem ponto"]
+    # Evita disparar HE em consultas meramente preventivas ("limite de horas extras").
+    termos_horas_extras = [
+        "hora extra todo dia",
+        "horas extras todo dia",
+        "hora extra habitual",
+        "horas extras habitual",
+        "jornada excessiva",
+    ]
     termos_pedido_demissao = ["pedido de demissão", "pedido de demissao", "pediu a conta", "pediu demissao"]
     termos_quitacao = ["paguei tudo", "recibos", "documentos", "quitação total", "quitacao total"]
-    termos_fgts_atraso = ["sem fgts", "fgts atrasado", "fgts em atraso", "fgts não recolhido", "fgts nao recolhido"]
+    termos_fgts_atraso = [
+        "sem fgts",
+        "fgts atrasado",
+        "fgts em atraso",
+        "fgts não recolhido",
+        "fgts nao recolhido",
+        "nao recolheu fgts",
+        "não recolheu fgts",
+        "nao depositou fgts",
+        "não depositou fgts",
+    ]
     termos_pj_subordinado = ["contrato pj", "pj", "pessoa jurídica", "pessoa juridica"]
     termos_subordinacao = ["batia ponto", "subordinação", "subordinacao", "chefe direto", "ordens diretas"]
     termos_terceirizado = ["terceirizado", "terceirizada"]
     termos_ferias_vencidas = ["férias vencidas", "ferias vencidas", "férias não pagas", "ferias nao pagas"]
-    termos_acao_judicial = ["ação judicial", "acao judicial", "entrou na justiça", "entrou na justica", "processo trabalhista"]
-    termos_peticao = ["petição inicial", "peticao inicial", "inicial", "documento da ação", "documento da acao"]
+    termos_acao_judicial = [
+        "ação judicial",
+        "acao judicial",
+        "entrou na justiça",
+        "entrou na justica",
+        "processo trabalhista",
+        "mandado de segurança",
+        "mandado de seguranca",
+        "ação civil",
+        "acao civil",
+        "cumprimento de sentença",
+        "cumprimento de sentenca",
+        "ação rescisória",
+        "acao rescisoria",
+    ]
+    # Não usar o token isolado "inicial" (gera falso "tem petição" em relatos que citam
+    # "petição inicial" justamente para dizer que não a possuem).
+    # Somente indícios de posse/juntada (evita "sem eu ter petição inicial" ser lido como positivo).
+    termos_peticao = [
+        "tenho a petição inicial",
+        "tenho a peticao inicial",
+        "tenho petição inicial",
+        "tenho peticao inicial",
+        "documento da ação em mãos",
+        "documento da acao em maos",
+        "documento da ação",
+        "documento da acao",
+        "juntei petição",
+        "juntei peticao",
+        "petição juntada",
+        "peticao juntada",
+        "mandei a petição",
+        "mandei a peticao",
+        "recebi a petição inicial",
+        "recebi a peticao inicial",
+    ]
     termos_banco_horas_sem_assinatura = ["banco de horas sem assinatura", "banco de horas sem assinar", "banco de horas não assinado", "banco de horas nao assinado"]
     termos_salario_picado = ["salário picado", "salario picado", "pagamento picado", "pago picado", "salario pago picado"]
     termos_recorrencia = ["vários meses", "varios meses", "recorrente", "todo mês", "todo mes", "sempre"]
     termos_pagamento_por_fora = ["paguei por fora", "pagamento por fora", "por fora varios meses", "por fora vários meses"]
     termos_jornada_sem_folga = ["domingo sem folga", "trabalhava domingo sem folga", "sem folga semanal"]
-    termos_assedio_indicios = ["humilhava", "humilha", "constrangimento", "assédio", "assedio", "gerente humilhava"]
+    # Indícios fortes (comportamental). "assedio" isolado fica subordinado a checagem de dúvida/hedge.
+    termos_assedio_forte = [
+        "humilhava",
+        "humilha",
+        "constrangimento",
+        "gerente humilhava",
+    ]
+    termos_hedge_assedio = [
+        "talvez",
+        "será que",
+        "sera que",
+        "só estresse",
+        "so estresse",
+        "só stress",
+        "so stress",
+        "nao sei",
+        "não sei",
+    ]
 
     tempo_meses = int(case_data.get("tempo_empresa_meses") or 0)
     if tempo_meses <= 0 and texto:
@@ -119,7 +204,32 @@ def _detectar_hard_rule_juridica(case_data):
     if not texto:
         return {}
 
-    horas_extras_contexto_alto = ("hora extra todo dia" in texto and "sem ponto" in texto) or ("jornada excessiva" in texto and "sem ponto" in texto)
+    he_base = any(t in texto for t in termos_horas_extras)
+    he_habito = (
+        "todo dia" in texto
+        or "habitual" in texto
+        or "recorrente" in texto
+        or "dois anos" in texto
+        or "vários meses" in texto
+        or "varios meses" in texto
+        or "sempre" in texto
+    )
+    he_controle = (
+        "sem ponto" in texto
+        or "sem controle de ponto" in texto
+        or "sem controle" in texto
+        or "sem pagamento" in texto
+        or "nao pagas" in texto
+        or "não pagas" in texto
+    )
+    he_composto = ("hora extra" in texto or "horas extras" in texto) and he_habito and he_controle
+
+    horas_extras_contexto_alto = (
+        ("hora extra todo dia" in texto and "sem ponto" in texto)
+        or ("horas extras todo dia" in texto and "sem ponto" in texto)
+        or ("jornada excessiva" in texto and "sem ponto" in texto)
+        or he_composto
+    )
     return {
         "gestante_dispensada": any(t in texto for t in termos_gestante) and any(t in texto for t in termos_desligamento),
         "verbas_nao_pagas": any(t in texto for t in termos_verbas_nao_pagas),
@@ -127,7 +237,7 @@ def _detectar_hard_rule_juridica(case_data):
         "funcionario_sem_registro": any(t in texto for t in termos_sem_registro) and tempo_meses >= 3,
         "acidente_sem_cat": any(t in texto for t in termos_acidente) and any(t in texto for t in termos_sem_cat),
         "assedio_com_provas": any(t in texto for t in termos_assedio) and any(t in texto for t in termos_provas_assedio),
-        "horas_extras_habituais": any(t in texto for t in termos_horas_extras),
+        "horas_extras_habituais": he_base or he_composto,
         "horas_extras_contexto_alto": horas_extras_contexto_alto,
         "pedido_demissao_quitado": any(t in texto for t in termos_pedido_demissao) and any(t in texto for t in termos_quitacao),
         "fgts_em_atraso": any(t in texto for t in termos_fgts_atraso) and ("6 meses" in texto or "7 meses" in texto or "8 meses" in texto or "9 meses" in texto or "1 ano" in texto or "12 meses" in texto),
@@ -144,8 +254,21 @@ def _detectar_hard_rule_juridica(case_data):
         ),
         "pagamento_por_fora_recorrente": any(t in texto for t in termos_pagamento_por_fora),
         "jornada_sem_folga": any(t in texto for t in termos_jornada_sem_folga),
-        "assedio_indicios": any(t in texto for t in termos_assedio_indicios),
+        "assedio_indicios": (
+            any(t in texto for t in termos_assedio_forte)
+            or (
+                ("assedio" in texto or "assédio" in texto)
+                and not any(t in texto for t in termos_hedge_assedio)
+            )
+        ),
     }
+
+
+def hard_rules_from_texto(texto: str) -> dict:
+    """Detecção de hard rules a partir de texto puro (motor e classificador reutilizam)."""
+    return _detectar_hard_rule_juridica(
+        {"texto": texto, "descricao": texto, "tempo_empresa_meses": 0}
+    )
 
 
 def calcular_score(case_data):

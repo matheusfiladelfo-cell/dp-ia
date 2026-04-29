@@ -1,0 +1,23 @@
+---
+description: Falhas de teste corrigem o produto; fluxo em 5 passos + registro
+alwaysApply: true
+---
+
+# Testes versus sistema real
+
+Quando um teste falhar ou a bateria mostrar ALERTA:
+
+- **Não** alterar expectativas, entradas ou limiares do teste só para passar.
+- **Não** “suavizar” frases ou critérios na suíte para maquiar taxa de acerto.
+- **Sim** corrigir o código de produção e documentar o aprendizado em `tests/LEARNINGS.md`.
+
+## Fluxo obrigatório (5 passos)
+
+1. **Causa raiz** — O que no sistema real explica a falha (motor, score, analisador, dados ausentes, edge case)? Sem culpar o teste sem evidência.
+2. **Correção mínima** — Menor mudança que restaura coerência jurídica/comercial e faz o teste refletir o comportamento desejado.
+3. **Compatibilidade** — Evitar quebras de API/contrato; migrações graduais quando necessário.
+4. **Suíte completa** — Rerodar **toda** a suíte relevante (ex.: `teste_guerra_100.py`, regressão nucleo, smoke que o projeto usar), não só o caso isolado.
+5. **Aprendizado** — Registrar em `tests/LEARNINGS.md` (data, sintoma, causa, correção, arquivos tocados). Uma linha ou bullet por incidente é suficiente.
+
+Objetivo: melhorar respostas para usuários reais (coerência jurídica, score confiável, racional verdadeiro). Preferir taxa menor e honesta a 100% artificial.
+

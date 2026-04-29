@@ -44,13 +44,15 @@ def classificar_por_regra(texto):
     ]):
         return "pedido_demissao"
 
-    # RESCISÃO
+    # RESCISÃO (evita rotear só por "dispensa" genérica → litígio sem fatos de dispensa ia parar na matriz errada)
     if any(p in texto_lower for p in [
         "demitir",
         "demissao",
-        "dispensa",
+        "dispensou",
+        "dispensado",
+        "dispensada",
         "foi demitido",
-        "empresa demitiu"
+        "empresa demitiu",
     ]):
         return "rescisao"
 
@@ -71,22 +73,66 @@ def classificar_risco_juridico(texto):
 
     texto_lower = texto.lower()
 
-    if any(p in texto_lower for p in [
-        "ofensa", "humilha", "xing", "assédio", "assedio",
-        "gritou", "constrangimento", "exposição", "exposicao",
-        "dano moral", "ridicularizado", "vergonha"
-    ]):
+    # Relatos especulativos ("talvez assédio") não devem herdar peso de assédio confirmado.
+    _hedge_assedio = (
+        "talvez",
+        "sera que",
+        "será que",
+        "so estresse",
+        "só estresse",
+        "so stress",
+        "só stress",
+        "nao sei",
+        "não sei",
+    )
+    _fortes_assedio = [
+        "ofensa",
+        "humilha",
+        "xing",
+        "gritou",
+        "constrangimento",
+        "exposição",
+        "exposicao",
+        "dano moral",
+        "ridicularizado",
+        "vergonha",
+    ]
+    _tem_hedge = any(h in texto_lower for h in _hedge_assedio)
+    _forte_sem_só_bare = any(p in texto_lower for p in _fortes_assedio)
+    _bare_assedio = "assedio" in texto_lower or "assédio" in texto_lower
+    _indicio_assedio = _forte_sem_só_bare or (_bare_assedio and not _tem_hedge)
+
+    if _indicio_assedio:
         return {
             "tipo_risco": "assedio_moral",
-            "gravidade": "alta"
+            "gravidade": "alta",
         }
 
-    if any(p in texto_lower for p in [
-        "acidente", "queda", "machucou", "lesão", "lesao"
-    ]):
+    # Nexo ocupacional incerto: não rotear como acidente de trabalho só por queda/lesão genérica.
+    _nexo_acidente_incerto = any(
+        p in texto_lower
+        for p in (
+            "trabalho ou casa",
+            "nao fala se",
+            "não fala se",
+            "duvidoso",
+            "duvida se",
+            "duvida se foi",
+            "sem nexo",
+            "nexo duvidoso",
+            "nao sei se foi",
+            "não sei se foi",
+            "pode ter sido em casa",
+        )
+    )
+    _sinais_acidente = any(
+        p in texto_lower for p in ("acidente", "queda", "machucou", "lesão", "lesao")
+    )
+
+    if _sinais_acidente and not _nexo_acidente_incerto:
         return {
             "tipo_risco": "acidente_trabalho",
-            "gravidade": "alta"
+            "gravidade": "alta",
         }
 
     if any(p in texto_lower for p in [
@@ -191,5 +237,8 @@ def analisar_texto_usuario(texto):
     # =========================
 
     resultado["perguntas"] = gerar_perguntas(resultado)
+
+    # Narrativa completa para o motor (evita _normalizar_texto sem o relato do usuário).
+    resultado["descricao_caso"] = texto
 
     return resultado
