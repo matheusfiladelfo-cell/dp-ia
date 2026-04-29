@@ -95,6 +95,14 @@ def _faixa_sem_base():
     return "Dados insuficientes para estimar acordo com segurança."
 
 
+def _tem_base_financeira_minima(dados, checklist):
+    if checklist.get("peticao_inicial") and checklist.get("calculos") and checklist.get("documentos"):
+        return True
+    salario = _parse_float(dados.get("salario")) or _parse_float(dados.get("salario_base"))
+    meses = _parse_float(dados.get("tempo_empresa_meses"))
+    return bool(salario and salario > 0 and meses and meses > 0)
+
+
 def _estimar_faixa_financeira_litigio(dados, checklist, baixa_confianca=False):
     pedido = _parse_float(dados.get("valor_pedido"))
     if pedido is None:
@@ -140,9 +148,9 @@ def _estimar_faixa_financeira_litigio(dados, checklist, baixa_confianca=False):
         }
 
     return {
-        "min": 8000.00,
-        "max": 25000.00,
-        "mensagem": "Faixa inicial conservadora sem base completa, dependente de cálculos e documentos.",
+        "min": None,
+        "max": None,
+        "mensagem": "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas.",
     }
 
 
@@ -453,10 +461,14 @@ def _aplicar_prudencia_litigio(parecer, dados, lacunas, contexto):
 
     # Confidence gating: sem certeza forte com baixa confiança ou dados insuficientes.
     baixa_confianca = confianca == "baixo" or proporcao["status"] == "insuficiente"
+    base_minima_financeira = _tem_base_financeira_minima(dados, checklist)
     faixa_fin = _estimar_faixa_financeira_litigio(dados, checklist, baixa_confianca=baixa_confianca)
     parecer["impacto_financeiro_provavel_min"] = faixa_fin["min"]
     parecer["impacto_financeiro_provavel_max"] = faixa_fin["max"]
-    parecer["impacto_financeiro"] = round((faixa_fin["min"] + faixa_fin["max"]) / 2, 2)
+    if faixa_fin["min"] is not None and faixa_fin["max"] is not None:
+        parecer["impacto_financeiro"] = round((faixa_fin["min"] + faixa_fin["max"]) / 2, 2)
+    else:
+        parecer["impacto_financeiro"] = 0
 
     if baixa_confianca:
         parecer["exposicao_juridica_provavel"] = (
@@ -486,7 +498,14 @@ def _aplicar_prudencia_litigio(parecer, dados, lacunas, contexto):
             parecer["faixa_provavel_acordo"] = (
                 "Faixa preliminar possível, condicionada à validação de cálculos e documentos apresentados."
             )
-    parecer["observacao_faixa_financeira"] = faixa_fin["mensagem"]
+    if not base_minima_financeira:
+        parecer["impacto_financeiro_provavel_min"] = None
+        parecer["impacto_financeiro_provavel_max"] = None
+        parecer["impacto_financeiro"] = 0
+        parecer["faixa_provavel_acordo"] = _faixa_sem_base()
+        parecer["observacao_faixa_financeira"] = "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas."
+    else:
+        parecer["observacao_faixa_financeira"] = faixa_fin["mensagem"]
     return parecer
 
 
@@ -756,6 +775,38 @@ def gerar_parecer_juridico(
     lacunas = _detectar_lacunas_dados(dados)
     lacunas_txt = ", ".join(lacunas) if lacunas else "nenhuma lacuna crítica identificada"
     modo_litigio = _is_litigio_trabalhista(contexto, dados)
+    perguntas_objetivas = resultado.get("perguntas_objetivas") or []
+
+    if perguntas_objetivas and str(resultado.get("risco", "")).upper() == "INCONCLUSIVO":
+        parecer_base = {
+            "parecer_schema_version": "2.0-auditoria-ui",
+            "risco": "INCONCLUSIVO",
+            "diagnostico": "A dispensa sem justa causa, por si só, não gera passivo automático. A análise depende da validação documental e de verbas.",
+            "fundamentacao": "Sem dados críticos de rescisão, qualquer conclusão firme sobre risco seria tecnicamente insegura.",
+            "recomendacao": "Responder as perguntas objetivas para liberar classificação de risco e estratégia empresarial.",
+            "pedido_complemento": "Para análise precisa, preciso confirmar: " + " ".join(
+                f"{idx + 1}. {q}" for idx, q in enumerate(perguntas_objetivas)
+            ),
+            "impacto_financeiro": 0,
+            "impacto_financeiro_provavel_min": None,
+            "impacto_financeiro_provavel_max": None,
+            "observacao_faixa_financeira": "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas.",
+            "decisao_empresarial": {
+                "risco_real": "INCONCLUSIVO",
+                "impacto_financeiro_provavel": "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas.",
+                "decisao_recomendada": "Concluir checklist de dados antes de definir defesa ou negociação.",
+            },
+            "proxima_acao": {
+                "hoje": perguntas_objetivas[0],
+                "dias_7": "Consolidar TRCT, comprovantes de pagamento e FGTS.",
+                "dias_30": "Reavaliar risco com base documental completa.",
+            },
+            "estrategia_recomendada": "Estratégia de prudência: primeiro fechar fatos e documentos, depois definir tese e condução.",
+        }
+        confiabilidades = _avaliar_confiabilidade_blocos(contexto, dados, resultado, parecer_base, lacunas)
+        parecer_base = _normalizar_blocos_executivos(parecer_base, confiabilidades)
+        parecer_base = _normalizar_veredito_estrategico(parecer_base)
+        return _enriquecer_parecer_compat(parecer_base, dados)
 
     if modo_litigio:
         checklist = _checklist_evidencias_litigio(contexto, dados)

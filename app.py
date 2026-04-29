@@ -3,7 +3,6 @@ import json
 import re
 import os
 import time
-from config_pricing import PRO, BUSINESS
 
 from banco import (
     criar_tabelas,
@@ -44,13 +43,10 @@ from application.empresa_use_cases import (
     cadastrar_empresa_usuario,
 )
 from application.dashboard_use_cases import gerar_insights_empresa_uc
-from application.billing_use_cases import iniciar_checkout_plano
-from application.subscription_use_cases import obter_status_assinatura
 from application.onboarding_use_cases import obter_onboarding_status, finalizar_onboarding
 from ui.layout import (
     render_app_theme,
     render_header,
-    render_premium_card,
     render_result_intro_card,
     render_section_title,
     render_footer,
@@ -71,12 +67,7 @@ from ui.onboarding_views import (
     render_onboarding_hint_empresa,
     render_onboarding_hint_analise,
     render_onboarding_conclusao,
-    render_jornada_versao_1,
 )
-from ui.pricing_views import render_planos_comparativo
-from ui.billing_views import traduzir_erro_checkout, render_checkout_success
-from ui.subscription_views import render_status_assinatura_card, render_cta_upgrade_free
-from ui.empty_states import render_empty_state_plano_free_limitado
 
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
 
@@ -284,28 +275,12 @@ plano = get_plano_usuario(usuario_id)
 # =========================
 render_header()
 
-# 🔥 CARD PREMIUM
-render_premium_card()
-
 
 # =========================
 # LOGOUT
 # =========================
 if st.sidebar.button("🚪 Sair"):
     processar_logout()
-
-st.sidebar.markdown(
-    """
-<div class="mp-empty-state" style="margin-top:8px;">
-  <div style="font-weight:700; color:#93c5fd;">Trial comercial</div>
-  <div style="font-size:0.86rem; color:#cbd5e1;">7 dias grátis ou 3 análises grátis para validar resultado real.</div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-if st.sidebar.button("🚀 Upgrade Pro/Business", width="stretch", key="sidebar_upgrade_monetizacao"):
-    st.info("Acesse a seção Upgrade Comercial para concluir assinatura.")
-
 
 # =========================
 # MODO
@@ -379,47 +354,9 @@ onboarding_ativo = onboarding_status.get("ativo", False)
 if onboarding_ativo:
     render_onboarding_header(onboarding_status.get("etapa_atual", 1))
 
-render_section_title("Resumo Comercial")
-status_assinatura = obter_status_assinatura(usuario_id, plano)
-render_status_assinatura_card(status_assinatura)
-render_jornada_versao_1(total_empresas, uso, status_assinatura)
-if plano == "FREE":
-    if render_cta_upgrade_free():
-        st.info("Escolha abaixo entre Pro ou Business para continuar o upgrade.")
-    render_empty_state_plano_free_limitado()
 render_usage(plano, uso, limite)
 if not pode_gerar_pdf(plano):
     st.caption("PDF premium disponível apenas nos planos pagos (Pro e Premium).")
-
-render_section_title("Upgrade Comercial")
-render_planos_comparativo(plano)
-provedor_pagamento = st.selectbox(
-    "Gateway de pagamento",
-    ["ASAAS", "MERCADO_PAGO"],
-    help="Estrutura preparada para integração oficial com gateway brasileiro.",
-)
-col_upgrade_1, col_upgrade_2 = st.columns(2)
-with col_upgrade_1:
-    assinar_pro = st.button(f"💳 Assinar Pro • R${PRO}", width="stretch")
-with col_upgrade_2:
-    assinar_premium = st.button(f"💳 Assinar Business • R${BUSINESS}", width="stretch")
-
-if assinar_pro or assinar_premium:
-    plano_destino = "PRO" if assinar_pro else "PREMIUM"
-    checkout_resp = iniciar_checkout_plano(
-        usuario_id=usuario_id,
-        plano=plano_destino,
-        provider=provedor_pagamento,
-    )
-    if checkout_resp.get("ok"):
-        render_checkout_success(
-            plano_destino=plano_destino,
-            checkout_url=checkout_resp.get("checkout_url"),
-            sandbox=checkout_resp.get("sandbox", False),
-        )
-    else:
-        erro_amigavel = traduzir_erro_checkout(checkout_resp.get("error", "erro desconhecido"))
-        st.error(erro_amigavel)
 
 
 # =========================
@@ -519,7 +456,7 @@ if modo == "🔵 Análise":
             status.update(label="Parecer estratégico pronto", state="complete")
 
         render_result_intro_card()
-        render_section_title("Relatório Executivo")
+        render_section_title("Parecer Profissional")
 
         def cor_score(score):
             if score >= 80:
@@ -534,22 +471,6 @@ if modo == "🔵 Análise":
         render_score(score, probabilidade, nivel, cor_score)
         render_decisao_executiva(score)
         render_parecer_sections(parecer, limpar_texto_ia)
-        st.markdown(
-            """
-<div class="mp-empty-state">
-  <div style="font-weight:700; color:#93c5fd;">Quer escalar decisões com padrão premium?</div>
-  <div style="color:#cbd5e1; font-size:0.9rem;">Upgrade para Pro/Business e libere PDF executivo, mais análises e prioridade operacional.</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        cta_result_1, cta_result_2 = st.columns(2)
-        with cta_result_1:
-            if st.button("🚀 Upgrade para Pro", width="stretch", key="result_upgrade_pro"):
-                st.info("Use a seção Upgrade Comercial para concluir assinatura Pro.")
-        with cta_result_2:
-            if st.button("🏢 Upgrade para Business", width="stretch", key="result_upgrade_business"):
-                st.info("Use a seção Upgrade Comercial para concluir assinatura Business.")
 
         st.markdown("### Coleta de Feedback do Resultado")
         schema_version = str(parecer.get("parecer_schema_version", "desconhecida"))

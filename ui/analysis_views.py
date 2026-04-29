@@ -110,164 +110,75 @@ border: 1px solid rgba(255,255,255,0.18);
 
 
 def render_parecer_sections(parecer, limpar_texto_fn):
-    st.markdown("### Relatório Executivo")
+    st.markdown("### Parecer Profissional")
 
-    veredito = parecer.get("veredito_estrategico") or {}
     decisao = parecer.get("decisao_empresarial") or {}
     proxima = parecer.get("proxima_acao") or {}
+    estrategia = (
+        parecer.get("estrategia_recomendada")
+        or parecer.get("recomendacao")
+        or decisao.get("decisao_recomendada")
+    )
 
+    st.markdown("#### 1) Diagnóstico Inicial")
     st.markdown(
         f"""
 <div class="dpia-report-card">
-  <strong>Resumo Executivo</strong><br>
-  {limpar_texto_fn(veredito.get("resumo_executivo_1_linha") or parecer.get("diagnostico") or "Cenário consolidado para decisão estratégica.")}
-</div>
-<div class="dpia-report-card">
-  <strong>Recomendação Imediata</strong><br>
-  {limpar_texto_fn(veredito.get("principal_proximo_passo") or proxima.get("hoje") or parecer.get("recomendacao") or "Definir ação prioritária com base no risco atual.")}
-</div>
-<div class="dpia-report-card">
-  <strong>Risco se Nada Fazer</strong><br>
-  {limpar_texto_fn(decisao.get("risco_real") or parecer.get("risco") or "MÉDIO")} •
-  {limpar_texto_fn(decisao.get("impacto_financeiro_provavel") or "Exposição financeira dependente do cenário probatório.")}
-</div>
-<div class="dpia-report-card">
-  <strong>Próximo Movimento Ideal</strong><br>
-  {limpar_texto_fn(proxima.get("dias_7") or veredito.get("aceitar_acordo_agora") or "Conduzir estratégia com governança e monitoramento semanal.")}
+{limpar_texto_fn(parecer.get("diagnostico") or parecer.get("tese_risco") or "Diagnóstico inicial em elaboração com base nos fatos informados.")}
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    assistente = parecer.get("assistente_juridico") or {}
-    auditoria = parecer.get("auditoria_interna") or {}
-
-    if decisao or assistente or proxima:
-        st.markdown("#### 1) Decisão Empresarial")
-        st.markdown(
-            f"""
+    st.markdown("#### 2) Risco Jurídico")
+    st.markdown(
+        f"""
 <div class="dpia-report-card">
-<strong>Risco real:</strong> {limpar_texto_fn(decisao.get("risco_real", parecer.get("risco", "N/A")))}<br>
-<strong>Impacto financeiro provável:</strong> {limpar_texto_fn(decisao.get("impacto_financeiro_provavel", parecer.get("impacto_financeiro", "N/A")))}<br>
-<strong>Decisão recomendada:</strong> {limpar_texto_fn(decisao.get("decisao_recomendada", parecer.get("recomendacao", "N/A")))}
+<strong>Nível:</strong> {limpar_texto_fn(decisao.get("risco_real") or parecer.get("risco") or "INCONCLUSIVO")}<br>
+{limpar_texto_fn(parecer.get("fundamentacao") or parecer.get("tese_defesa") or "Risco depende da robustez documental e da coerência dos fatos.")}
 </div>
 """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("#### 2) Assistente Jurídico")
-        pontos_prova = assistente.get("pontos_de_prova") or parecer.get("pontos_dependentes_prova") or []
-        docs_necessarios = assistente.get("documentos_necessarios") or []
-        st.markdown(
-            f"""
-<div class="dpia-report-card">
-<strong>Base legal prática:</strong> {limpar_texto_fn(assistente.get("base_legal_pratica", parecer.get("fundamentacao", "N/A")))}
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        if pontos_prova:
-            st.markdown("**Pontos de prova**")
-            for item in pontos_prova:
-                st.markdown(f"- {limpar_texto_fn(item)}")
-        if docs_necessarios:
-            st.markdown("**Documentos necessários**")
-            for item in docs_necessarios:
-                st.markdown(f"- {limpar_texto_fn(item)}")
-
-        st.markdown("#### 3) Próxima Ação")
-        st.markdown(
-            f"""
-<div class="dpia-report-card">
-<strong>Hoje:</strong> {limpar_texto_fn(proxima.get("hoje", "Consolidar fatos e documentos essenciais."))}<br>
-<strong>7 dias:</strong> {limpar_texto_fn(proxima.get("dias_7", "Definir estratégia com base na prova consolidada."))}<br>
-<strong>30 dias:</strong> {limpar_texto_fn(proxima.get("dias_30", "Executar plano jurídico e revisar controles internos."))}
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("#### Auditoria Interna")
-        c1, c2, c3 = st.columns(3)
-        audit_dec = auditoria.get("decisao_empresarial") or {}
-        audit_ass = auditoria.get("assistente_juridico") or {}
-        audit_acao = auditoria.get("proxima_acao") or {}
-        with c1:
-            st.metric("Decisão Empresarial", (audit_dec.get("confianca") or parecer.get("decisao_empresarial_confianca") or "media").upper())
-            st.caption(limpar_texto_fn(audit_dec.get("motivo") or parecer.get("motivo_decisao_empresarial_confianca") or "Sem justificativa detalhada."))
-        with c2:
-            st.metric("Assistente Jurídico", (audit_ass.get("confianca") or parecer.get("assistente_juridico_confianca") or "media").upper())
-            st.caption(limpar_texto_fn(audit_ass.get("motivo") or parecer.get("motivo_assistente_juridico_confianca") or "Sem justificativa detalhada."))
-        with c3:
-            st.metric("Próxima Ação", (audit_acao.get("confianca") or parecer.get("proxima_acao_confianca") or "media").upper())
-            st.caption(limpar_texto_fn(audit_acao.get("motivo") or parecer.get("motivo_proxima_acao_confianca") or "Sem justificativa detalhada."))
-
-        schema_version = parecer.get("parecer_schema_version")
-        if schema_version:
-            st.caption(f"schema: {schema_version}")
-
-        st.markdown("---")
-
-    if veredito:
-        st.markdown("#### VEREDITO ESTRATÉGICO")
-        st.markdown(
-            f"""
-<div class="dpia-report-card">
-<strong>Aceitar acordo agora:</strong> {limpar_texto_fn(veredito.get("aceitar_acordo_agora", "depende")).upper()}<br>
-<strong>Contestar inicialmente:</strong> {limpar_texto_fn(veredito.get("contestar_inicialmente", "sim")).upper()}<br>
-<strong>Faixa de acordo sugerida:</strong> {limpar_texto_fn(veredito.get("faixa_acordo_sugerida", "Depende de cálculos e documentos."))}<br>
-<strong>Urgência:</strong> {limpar_texto_fn(veredito.get("urgencia", "media")).upper()}<br>
-<strong>Principal próximo passo:</strong> {limpar_texto_fn(veredito.get("principal_proximo_passo", "Consolidar base probatória e definir condução inicial."))}<br>
-<strong>Resumo executivo (1 linha):</strong> {limpar_texto_fn(veredito.get("resumo_executivo_1_linha", "Decisão estratégica depende de risco, prova e custo provável."))}
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("#### 🧾 Análise do Caso")
-    st.markdown(limpar_texto_fn(parecer.get("diagnostico")))
-
-    st.markdown("#### ⚖️ Fundamentação Jurídica")
-    st.markdown(limpar_texto_fn(parecer.get("fundamentacao")))
-
-    st.markdown("#### 📉 Impactos Trabalhistas")
-    st.markdown(parecer.get("impactos"))
-
-    st.markdown("#### 💰 Impacto Financeiro")
-    impacto_min = parecer.get("impacto_financeiro_provavel_min")
-    impacto_max = parecer.get("impacto_financeiro_provavel_max")
-    litigioso = bool(
-        parecer.get("strategy_band")
-        or parecer.get("faixa_provavel_acordo")
-        or (impacto_min is not None and impacto_max is not None)
+        unsafe_allow_html=True,
     )
 
+    st.markdown("#### 3) Impacto Financeiro")
+    impacto_min = parecer.get("impacto_financeiro_provavel_min")
+    impacto_max = parecer.get("impacto_financeiro_provavel_max")
+    msg_sem_base = "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas."
+    impacto_renderizado = msg_sem_base
     if impacto_min not in [None, ""] and impacto_max not in [None, ""]:
         try:
             impacto_min = float(impacto_min)
             impacto_max = float(impacto_max)
             if impacto_min > 0 and impacto_max > 0:
-                st.markdown(f"### R$ {impacto_min:,.2f} a R$ {impacto_max:,.2f}")
-                obs_faixa = parecer.get("observacao_faixa_financeira")
-                if obs_faixa:
-                    st.caption(limpar_texto_fn(obs_faixa))
-            else:
-                st.markdown("### Faixa inicial em revisão (dependente de cálculos).")
+                impacto_renderizado = f"R$ {impacto_min:,.2f} a R$ {impacto_max:,.2f}"
         except Exception:
-            st.markdown("### Faixa inicial em revisão (dependente de cálculos).")
-    else:
-        impacto = parecer.get("impacto_financeiro", 0)
+            impacto_renderizado = msg_sem_base
+    st.markdown(
+        f"""
+<div class="dpia-report-card">
+{limpar_texto_fn(decisao.get("impacto_financeiro_provavel") or impacto_renderizado)}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-        try:
-            impacto = float(impacto)
-        except Exception:
-            impacto = 0
+    st.markdown("#### 4) Próxima Ação Recomendada")
+    st.markdown(
+        f"""
+<div class="dpia-report-card">
+{limpar_texto_fn(proxima.get("hoje") or parecer.get("pedido_complemento") or "Validar documentos críticos antes de consolidar posição final.")}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-        if litigioso and impacto <= 0:
-            st.markdown("### Faixa estimada inicial disponível mediante memória de cálculos.")
-            st.caption("Caso litigioso sem base numérica completa. O valor depende de cálculos detalhados.")
-        else:
-            st.markdown(f"### R$ {impacto:,.2f}")
-
-    st.markdown("#### 📌 Orientação Estratégica")
-    st.markdown(limpar_texto_fn(parecer.get("recomendacao")))
+    st.markdown("#### 5) Estratégia Empresarial")
+    st.markdown(
+        f"""
+<div class="dpia-report-card">
+{limpar_texto_fn(estrategia or "Conduzir estratégia com base em prova, prazo e impacto potencial.")}
+</div>
+""",
+        unsafe_allow_html=True,
+    )

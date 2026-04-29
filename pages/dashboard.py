@@ -5,7 +5,6 @@ import altair as alt
 import json
 
 from banco import criar_tabelas, listar_empresas, usuario_pode_acessar_plataforma
-from plano_service import get_plano_usuario
 from ui.theme import apply_global_theme
 from ui.empty_states import (
     render_empty_state_sem_empresa,
@@ -48,13 +47,6 @@ st.markdown(
         border-color: rgba(96,165,250,0.40);
         box-shadow: 0 12px 26px rgba(2,6,23,0.34), 0 0 18px rgba(59,130,246,0.14);
     }
-    .mp-right {
-        border: 1px solid rgba(96,165,250,0.34);
-        border-radius: 14px;
-        background: linear-gradient(145deg, rgba(15,23,42,0.88), rgba(30,64,175,0.22));
-        padding: 0.9rem;
-        color: #f8fafc;
-    }
     .mp-summary {
         border: 1px solid rgba(148,163,184,0.24);
         border-radius: 14px;
@@ -79,12 +71,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-top_cta_1, top_cta_2, _ = st.columns([1, 1, 3])
+top_cta_1, _ = st.columns([1, 4])
 with top_cta_1:
     if st.button("🧾 Nova análise", width="stretch"):
-        st.switch_page("app.py")
-with top_cta_2:
-    if st.button("🚀 Ver upgrade", width="stretch"):
         st.switch_page("app.py")
 
 st.markdown(
@@ -133,8 +122,6 @@ empresa_selecionada = st.sidebar.selectbox(
 )
 
 empresa_id = empresa_map.get(empresa_selecionada)
-plano_atual = get_plano_usuario(usuario_id)
-plano_display = {"FREE": "Starter", "PRO": "Pro", "PREMIUM": "Business"}.get(str(plano_atual).upper(), str(plano_atual))
 
 # ===============================
 # DADOS
@@ -231,7 +218,7 @@ if "parecer_json" in df_filtrado.columns:
 # ===============================
 
 with st.spinner("Preparando dashboard..."):
-    col_main, col_right = st.columns([2.2, 1])
+    col_main = st.container()
 with col_main:
     st.markdown('<div class="mp-section-title">Indicadores Estratégicos</div>', unsafe_allow_html=True)
     k1, k2, k3, k4 = st.columns(4)
@@ -269,16 +256,6 @@ with col_main:
 """,
         unsafe_allow_html=True,
     )
-with col_right:
-    st.markdown('<div class="mp-right">', unsafe_allow_html=True)
-    st.markdown("**Plano atual**")
-    st.markdown(f"### {plano_display}")
-    st.caption("Trial: 7 dias grátis ou 3 análises grátis.")
-    st.caption(f"Empresa selecionada: {empresa_selecionada}")
-    if st.button("🚀 Upgrade Pro/Business", width="stretch"):
-        st.switch_page("app.py")
-    st.markdown("</div>", unsafe_allow_html=True)
-
 # ===============================
 # GRÁFICOS
 # ===============================

@@ -47,6 +47,21 @@ def _extrair_tempo_meses(texto):
         return 0
 
 
+def _perguntas_faltantes_rescisao(texto, dados):
+    perguntas = []
+    if "justa causa" not in texto and "sem justa causa" not in texto and not dados.get("tipo_rescisao"):
+        perguntas.append("A dispensa foi sem justa causa ou por justa causa?")
+    if "trct" not in texto:
+        perguntas.append("Houve assinatura do TRCT e entrega das guias rescisórias?")
+    if not dados.get("tempo_empresa_meses") and "mes" not in texto and "ano" not in texto:
+        perguntas.append("Qual era o tempo de casa da colaboradora?")
+    if "fgts" not in texto:
+        perguntas.append("O FGTS estava regular durante o vínculo e na rescisão?")
+    if "aviso prévio" not in texto and "aviso previo" not in texto:
+        perguntas.append("Houve aviso prévio trabalhado ou indenizado?")
+    return perguntas
+
+
 def _aplicar_hard_rule_resultado(resultado, texto, lacunas, dados):
     if not isinstance(resultado, dict):
         return resultado
@@ -434,6 +449,24 @@ def analisar_caso(tipo_caso, dados):
 
     if tipo_caso == "rescisao":
         texto_rescisao = texto
+        perguntas_faltantes = _perguntas_faltantes_rescisao(texto_rescisao, dados)
+        if len(perguntas_faltantes) >= 3:
+            return _aplicar_hard_rule_resultado({
+                "tipo": "Rescisão",
+                "risco": "INCONCLUSIVO",
+                "pontuacao": 32,
+                "alertas": [
+                    {
+                        "tipo": "DADOS ESSENCIAIS AUSENTES",
+                        "nivel": "INCONCLUSIVO",
+                        "mensagem": "Faltam dados essenciais para classificação segura do risco rescisório.",
+                        "lacunas": lacunas,
+                    }
+                ],
+                "perguntas_objetivas": perguntas_faltantes,
+                "racional_decisao": "Sem dados mínimos de rescisão, a análise deve priorizar perguntas objetivas antes de concluir risco.",
+            }, texto, lacunas, dados)
+
         gestante_flag = dados.get("gestante", False) or any(t in texto_rescisao for t in ["gestante", "grávida", "gravida", "gestação", "gestacao"])
         cipa_flag = dados.get("cipa", False) or any(t in texto_rescisao for t in ["cipa", "cipeiro"])
         dirigente_flag = dados.get("dirigente_sindical", False) or "dirigente sindical" in texto_rescisao
