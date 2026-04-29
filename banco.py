@@ -540,6 +540,7 @@ def login_usuario(email, senha):
         return None
 
     if bcrypt.checkpw(senha.encode(), senha_hash):
+        promover_admin_por_email_se_necessario(user_id, email)
         resetar_falhas_login(email)
         return user_id
 
@@ -565,6 +566,25 @@ def usuario_eh_admin(usuario_id) -> bool:
     row = cursor.fetchone()
     conn.close()
     return bool(row and int(row[0] or 0) == 1)
+
+
+def promover_admin_por_email_se_necessario(usuario_id, email: str | None) -> None:
+    """
+    Se ADMIN_MASTER_EMAIL estiver configurado e o login corresponder,
+    garante is_admin=1 para restaurar acesso admin sem intervenção manual.
+    """
+    if not _email_admin_master(email):
+        return
+    if usuario_eh_admin(usuario_id):
+        return
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE usuarios SET is_admin = 1 WHERE id = ?",
+        (int(usuario_id),),
+    )
+    conn.commit()
+    conn.close()
 
 
 def registrar_admin_audit(
@@ -1375,7 +1395,7 @@ def usuario_acesso_suspenso_assinatura(usuario_id) -> bool:
 
 def usuario_pode_acessar_plataforma(usuario_id) -> bool:
     em = obter_email_usuario(usuario_id)
-    if _email_admin_master(em):
+    if _email_admin_master(em) or usuario_eh_admin(usuario_id):
         return True
     if usuario_bloqueado(usuario_id):
         return False

@@ -54,13 +54,15 @@ def _admin_master_email() -> str | None:
 
 def is_admin_master(email: str | None, user_id: int | None = None) -> bool:
     master = _admin_master_email()
-    if not master:
+    if user_id is None:
         return False
+    # Fallback seguro para ambientes onde ADMIN_MASTER_EMAIL não foi definido:
+    # mantém admin restrito ao flag interno do banco.
+    if not master:
+        return usuario_eh_admin(user_id)
     if not email or not str(email).strip():
         return False
     if str(email).strip().lower() != master:
-        return False
-    if user_id is None:
         return False
     return usuario_eh_admin(user_id)
 
