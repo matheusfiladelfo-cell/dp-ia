@@ -36,7 +36,6 @@ def _whatsapp_strategic_block(button_key: str, show_urgency: bool = True):
         "Falar com especialista agora",
         _mp_whatsapp_url(),
         width="stretch",
-        key=button_key,
         help="Abre o WhatsApp com mensagem pronta para demonstração.",
     )
 
