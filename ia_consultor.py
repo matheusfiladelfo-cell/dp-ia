@@ -1,6 +1,7 @@
 from ia_client import client
 from ia_validator import validar_parecer
 import json
+import os
 
 
 def _to_text(value):
@@ -746,6 +747,46 @@ def _normalizar_veredito_estrategico(parecer):
     return parecer
 
 
+def _parecer_fast_from_fluxo(contexto, dados, resultado, score, probabilidade):
+    fluxo = dados.get("fluxo_consulta") if isinstance(dados, dict) else {}
+    if not isinstance(fluxo, dict):
+        return None
+
+    executivo = fluxo.get("parecer_executivo") if isinstance(fluxo.get("parecer_executivo"), dict) else {}
+    perguntas = fluxo.get("perguntas_objetivas") or resultado.get("perguntas_objetivas") or []
+    pedido = fluxo.get("pedido_complemento") or (
+        "Para análise precisa, preciso confirmar: " + " ".join(f"{i + 1}. {q}" for i, q in enumerate(perguntas))
+        if perguntas else ""
+    )
+    impacto_txt = fluxo.get("impacto_financeiro_texto") or "Impacto financeiro depende de salário, tempo de vínculo e verbas discutidas."
+    risco = str(resultado.get("risco") or fluxo.get("risco") or "INCONCLUSIVO").upper()
+
+    return {
+        "parecer_schema_version": "2.0-auditoria-ui",
+        "risco": risco,
+        "diagnostico": executivo.get("diagnostico_inicial") or "Diagnóstico inicial baseado no relato informado.",
+        "fundamentacao": executivo.get("risco_juridico") or resultado.get("racional_decisao") or "Risco depende da confirmação de fatos e provas.",
+        "impactos": executivo.get("risco_juridico") or "Impactos variam conforme prova documental e histórico contratual.",
+        "impacto_financeiro": 0,
+        "impacto_financeiro_provavel_min": None,
+        "impacto_financeiro_provavel_max": None,
+        "observacao_faixa_financeira": impacto_txt,
+        "recomendacao": executivo.get("estrategia_empresarial") or "Consolidar documentação para decisão empresarial segura.",
+        "pedido_complemento": pedido,
+        "decisao_empresarial": {
+            "risco_real": risco,
+            "impacto_financeiro_provavel": impacto_txt,
+            "decisao_recomendada": executivo.get("estrategia_empresarial") or "Definir estratégia após fechamento dos dados críticos.",
+        },
+        "proxima_acao": {
+            "hoje": executivo.get("proxima_acao_recomendada") or (perguntas[0] if perguntas else "Consolidar fatos e documentos."),
+            "dias_7": "Concluir coleta de evidências e validar exposição real.",
+            "dias_30": "Executar plano jurídico final com governança interna.",
+        },
+        "confianca_conclusao": "medio",
+    }
+
+
 def gerar_parecer_juridico(
     contexto,
     dados,
@@ -753,6 +794,16 @@ def gerar_parecer_juridico(
     score=None,
     probabilidade=None
 ):
+    usar_fast = str(os.getenv("DP_IA_FAST_PARECER", "1")).strip().lower() not in {"0", "false", "no"}
+    if usar_fast and isinstance(dados, dict) and dados.get("fluxo_consulta"):
+        lacunas = _detectar_lacunas_dados(dados)
+        parecer = _parecer_fast_from_fluxo(contexto, dados, resultado, score, probabilidade)
+        if parecer:
+            confiabilidades = _avaliar_confiabilidade_blocos(contexto, dados, resultado, parecer, lacunas)
+            parecer = _normalizar_blocos_executivos(parecer, confiabilidades)
+            parecer = _normalizar_veredito_estrategico(parecer)
+            return _enriquecer_parecer_compat(parecer, dados)
+
     lacunas = _detectar_lacunas_dados(dados)
     lacunas_txt = ", ".join(lacunas) if lacunas else "nenhuma lacuna crítica identificada"
     modo_litigio = _is_litigio_trabalhista(contexto, dados)
