@@ -241,6 +241,6 @@ div[data-baseweb="menu"] {
             from banco import obter_email_usuario
 
             email = obter_email_usuario(uid)
-        admin_views.apply_sidebar_admin_visibility(email)
+        admin_views.apply_sidebar_admin_visibility(email, uid)
     except Exception:
         pass

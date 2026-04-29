@@ -1,6 +1,7 @@
 import csv
 import os
 import sqlite3
+import time
 from datetime import datetime
 import json
 import bcrypt
@@ -20,15 +21,140 @@ LEAD_CRM_STATUSES = (
 
 # 🔥 PADRÃO ÚNICO DE BANCO (CRÍTICO)
 DB_NAME = "dpia.db"
+_LOGIN_MAX_FAILED = 5
+_LOGIN_WINDOW_SECONDS = 10 * 60
+_LOGIN_BLOCK_SECONDS = 3 * 60
+
+
+def _admin_master_email() -> str | None:
+    raw = os.environ.get("ADMIN_MASTER_EMAIL")
+    if not raw or not str(raw).strip():
+        return None
+    return str(raw).strip().lower()
 
 
 def _email_admin_master(email: str | None) -> bool:
-    if not email:
+    master = _admin_master_email()
+    if not email or not master:
         return False
-    master = os.environ.get(
-        "ADMIN_MASTER_EMAIL", "matheus.filadelfo@gmail.com"
-    ).strip().lower()
     return str(email).strip().lower() == master
+
+
+def _login_key(email: str | None, ip: str | None = None) -> str:
+    e = (email or "").strip().lower()
+    i = (ip or "").strip().lower() or "noip"
+    return f"{e}|{i}"
+
+
+def _login_rate_limit_gc(cursor, now_ts: float) -> None:
+    cutoff = now_ts - (_LOGIN_WINDOW_SECONDS * 2)
+    cursor.execute(
+        """
+        DELETE FROM login_rate_limit
+        WHERE COALESCE(blocked_until_ts, 0) < ? AND COALESCE(last_fail_ts, 0) < ?
+        """,
+        (now_ts, cutoff),
+    )
+
+
+def verificar_rate_limit_login(email: str | None, ip: str | None = None) -> tuple[bool, int]:
+    """
+    Retorna (permitido, segundos_restantes_bloqueio).
+    Bloqueio leve persistente para reduzir força bruta entre reinícios.
+    """
+    key = _login_key(email, ip)
+    now_ts = time.time()
+    conn = conectar()
+    cursor = conn.cursor()
+    _login_rate_limit_gc(cursor, now_ts)
+    cursor.execute(
+        """
+        SELECT COALESCE(blocked_until_ts, 0)
+        FROM login_rate_limit
+        WHERE rl_key = ?
+        """,
+        (key,),
+    )
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    if not row:
+        return True, 0
+    blocked_until = float(row[0] or 0.0)
+    if blocked_until > now_ts:
+        return False, int(blocked_until - now_ts)
+    return True, 0
+
+
+def registrar_falha_login(email: str | None, ip: str | None = None) -> None:
+    key = _login_key(email, ip)
+    now_ts = time.time()
+    conn = conectar()
+    cursor = conn.cursor()
+    _login_rate_limit_gc(cursor, now_ts)
+    cursor.execute(
+        """
+        SELECT COALESCE(failed_count, 0), COALESCE(first_fail_ts, 0), COALESCE(blocked_until_ts, 0)
+        FROM login_rate_limit
+        WHERE rl_key = ?
+        """,
+        (key,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        failed_count = 1
+        first_fail = now_ts
+        blocked_until = 0.0
+    else:
+        failed_count = int(row[0] or 0)
+        first_fail = float(row[1] or now_ts)
+        blocked_until = float(row[2] or 0.0)
+        if (now_ts - first_fail) > _LOGIN_WINDOW_SECONDS:
+            failed_count = 0
+            first_fail = now_ts
+        if blocked_until > now_ts:
+            conn.commit()
+            conn.close()
+            return
+        failed_count += 1
+    if failed_count >= _LOGIN_MAX_FAILED:
+        blocked_until = now_ts + _LOGIN_BLOCK_SECONDS
+        failed_count = 0
+        first_fail = now_ts
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO login_rate_limit (
+            rl_key, failed_count, first_fail_ts, last_fail_ts, blocked_until_ts, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (key, failed_count, first_fail, now_ts, blocked_until, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    )
+    conn.commit()
+    conn.close()
+
+
+def resetar_falhas_login(email: str | None, ip: str | None = None) -> None:
+    """
+    Se ip for informado, limpa só a chave daquele par email/ip.
+    Se ip for None, limpa todas as chaves do email.
+    """
+    e = (email or "").strip().lower()
+    if not e:
+        return
+    conn = conectar()
+    cursor = conn.cursor()
+    if ip is not None:
+        cursor.execute(
+            "DELETE FROM login_rate_limit WHERE rl_key = ?",
+            (_login_key(email, ip),),
+        )
+    else:
+        cursor.execute(
+            "DELETE FROM login_rate_limit WHERE rl_key LIKE ?",
+            (f"{e}|%",),
+        )
+    conn.commit()
+    conn.close()
 
 
 # =========================
@@ -51,6 +177,46 @@ def _garantir_coluna_usuarios_bloqueado():
         pass
     finally:
         conn.close()
+
+
+def _garantir_coluna_usuarios_is_admin():
+    """Migração leve: flag de privilégio admin (0 = comum, 1 = admin)."""
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "ALTER TABLE usuarios ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
+def _bootstrap_admin_master():
+    """
+    Bootstrap opcional via ADMIN_MASTER_EMAIL:
+    se definida, garante somente este usuário com is_admin=1.
+    """
+    master = _admin_master_email()
+    if not master:
+        return
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET is_admin = CASE
+            WHEN LOWER(COALESCE(email, '')) = ? THEN 1
+            ELSE 0
+        END
+        """
+        ,
+        (master,),
+    )
+    conn.commit()
+    conn.close()
 
 
 # =========================
@@ -179,10 +345,35 @@ def criar_tabelas():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS login_rate_limit (
+        rl_key TEXT PRIMARY KEY,
+        failed_count INTEGER DEFAULT 0,
+        first_fail_ts REAL,
+        last_fail_ts REAL,
+        blocked_until_ts REAL DEFAULT 0,
+        updated_at TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_user_id INTEGER,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id TEXT,
+        details TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+
     conn.commit()
     conn.close()
     _garantir_coluna_usuarios_bloqueado()
+    _garantir_coluna_usuarios_is_admin()
     _garantir_colunas_leads_crm()
+    _bootstrap_admin_master()
 
 
 def _garantir_colunas_leads_crm():
@@ -349,6 +540,7 @@ def login_usuario(email, senha):
         return None
 
     if bcrypt.checkpw(senha.encode(), senha_hash):
+        resetar_falhas_login(email)
         return user_id
 
     return None
@@ -361,6 +553,47 @@ def obter_email_usuario(usuario_id):
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else None
+
+
+def usuario_eh_admin(usuario_id) -> bool:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COALESCE(is_admin, 0) FROM usuarios WHERE id = ?",
+        (usuario_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row and int(row[0] or 0) == 1)
+
+
+def registrar_admin_audit(
+    admin_user_id,
+    action: str,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    details: str | None = None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO admin_audit_log (
+            admin_user_id, action, target_type, target_id, details, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(admin_user_id) if admin_user_id is not None else None,
+            str(action or "").strip() or "admin_action",
+            str(target_type or "").strip() or None,
+            str(target_id or "").strip() or None,
+            str(details or "").strip() or None,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 # =========================
@@ -926,7 +1159,7 @@ def admin_crm_listar_leads(filtro_status: str | None = None):
     return rows
 
 
-def admin_crm_atualizar_lead(lead_id, status=None, observacoes=None):
+def admin_crm_atualizar_lead(lead_id, status=None, observacoes=None, actor_admin_id=None):
     """Atualiza status e/ou observações do lead (CRM)."""
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if status is None and observacoes is None:
@@ -949,6 +1182,13 @@ def admin_crm_atualizar_lead(lead_id, status=None, observacoes=None):
     cursor.execute(sql, vals)
     conn.commit()
     conn.close()
+    registrar_admin_audit(
+        admin_user_id=actor_admin_id,
+        action="crm_update_lead",
+        target_type="lead",
+        target_id=str(lead_id),
+        details=f"status={status if status is not None else '-'}",
+    )
     return True
 
 
@@ -1162,7 +1402,7 @@ def admin_listar_usuarios_gestao():
     return rows
 
 
-def admin_definir_bloqueio_usuario(usuario_id, bloqueado: int) -> bool:
+def admin_definir_bloqueio_usuario(usuario_id, bloqueado: int, actor_admin_id=None) -> bool:
     if int(bloqueado) == 1 and _email_admin_master(obter_email_usuario(usuario_id)):
         return False
     conn = conectar()
@@ -1173,10 +1413,17 @@ def admin_definir_bloqueio_usuario(usuario_id, bloqueado: int) -> bool:
     )
     conn.commit()
     conn.close()
+    registrar_admin_audit(
+        admin_user_id=actor_admin_id,
+        action="admin_set_user_block",
+        target_type="usuario",
+        target_id=str(usuario_id),
+        details=f"bloqueado={1 if int(bloqueado) else 0}",
+    )
     return True
 
 
-def admin_definir_plano_e_status(usuario_id, plano: str, status_assinatura: str) -> bool:
+def admin_definir_plano_e_status(usuario_id, plano: str, status_assinatura: str, actor_admin_id=None) -> bool:
     """Plano FREE|PRO|PREMIUM e status active|suspended (controle de acesso ao SaaS)."""
     if (
         str(status_assinatura or "").lower() == "suspended"
@@ -1190,6 +1437,13 @@ def admin_definir_plano_e_status(usuario_id, plano: str, status_assinatura: str)
     if status_assinatura not in ("active", "suspended"):
         status_assinatura = "active"
     definir_plano_usuario(int(usuario_id), plano, status=status_assinatura)
+    registrar_admin_audit(
+        admin_user_id=actor_admin_id,
+        action="admin_set_plan_status",
+        target_type="usuario",
+        target_id=str(usuario_id),
+        details=f"plano={plano};status={status_assinatura}",
+    )
     return True
 
 

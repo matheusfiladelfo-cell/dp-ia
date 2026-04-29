@@ -1,13 +1,17 @@
 import streamlit as st
 import json
 import re
+import os
+import time
 from config_pricing import PRO, BUSINESS
 
 from banco import (
     criar_tabelas,
     obter_uso_usuario,
+    registrar_falha_login,
     salvar_feedback_resultado_analise,
     usuario_pode_acessar_plataforma,
+    verificar_rate_limit_login,
 )
 
 from ia_chat import gerar_resposta_chat
@@ -74,6 +78,66 @@ from ui.billing_views import traduzir_erro_checkout, render_checkout_success
 from ui.subscription_views import render_status_assinatura_card, render_cta_upgrade_free
 from ui.empty_states import render_empty_state_plano_free_limitado
 
+SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+
+
+def _enforce_production_security_env():
+    env = str(os.getenv("APP_ENV", "")).strip().lower()
+    if env != "production":
+        return
+
+    missing = []
+    if not str(os.getenv("ADMIN_MASTER_EMAIL", "")).strip():
+        missing.append("ADMIN_MASTER_EMAIL")
+    if not str(os.getenv("STREAMLIT_SERVER_COOKIE_SECRET", "")).strip():
+        missing.append("STREAMLIT_SERVER_COOKIE_SECRET")
+
+    asaas_token = str(os.getenv("ASAAS_WEBHOOK_TOKEN", "")).strip()
+    mp_token = str(os.getenv("MP_WEBHOOK_TOKEN", "")).strip()
+    if not asaas_token and not mp_token:
+        missing.append("ASAAS_WEBHOOK_TOKEN ou MP_WEBHOOK_TOKEN")
+
+    if missing:
+        st.error(
+            "Configuração de segurança obrigatória ausente para produção. "
+            "Defina as variáveis: " + ", ".join(missing)
+        )
+        st.stop()
+
+
+def _obter_ip_cliente():
+    try:
+        ctx = getattr(st, "context", None)
+        headers = getattr(ctx, "headers", None) if ctx is not None else None
+        if not headers:
+            return None
+        xff = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For")
+        if xff:
+            return str(xff).split(",")[0].strip()
+        xrip = headers.get("x-real-ip") or headers.get("X-Real-IP")
+        if xrip:
+            return str(xrip).strip()
+    except Exception:
+        return None
+    return None
+
+
+def _check_session_idle_timeout():
+    if "user_id" not in st.session_state:
+        return
+
+    now_ts = time.time()
+    timeout_seconds = max(5, SESSION_IDLE_TIMEOUT_MINUTES) * 60
+    last_ts = st.session_state.get("_last_activity_ts")
+
+    if last_ts and (now_ts - float(last_ts)) > timeout_seconds:
+        del st.session_state["user_id"]
+        st.session_state["session_timeout_notice"] = True
+        st.session_state.pop("_last_activity_ts", None)
+        st.rerun()
+
+    st.session_state["_last_activity_ts"] = now_ts
+
 
 # 🔥 LIMPEZA TEXTO IA
 def limpar_texto_ia(texto):
@@ -123,6 +187,7 @@ def validar_cnpj(cnpj):
 criar_tabelas()
 
 st.set_page_config(page_title="DP-IA", layout="wide")
+_enforce_production_security_env()
 render_app_theme()
 
 
@@ -142,6 +207,8 @@ if "user_id" not in st.session_state:
         if landing_intent == "trial"
         else None
     )
+    if st.session_state.pop("session_timeout_notice", False):
+        st.info("Sua sessão expirou por inatividade. Faça login novamente para continuar.")
 
     aba, email, senha, acao_clicada = render_auth_view(
         default_tab=default_tab,
@@ -162,13 +229,22 @@ if "user_id" not in st.session_state:
 
         if acao_execucao == "Entrar":
             with st.spinner("Carregando dados..."):
+                ip_cliente = _obter_ip_cliente()
                 if not email_valido(email):
                     st.error("Email inválido")
                     st.session_state["auth_processing"] = False
                     st.session_state["auth_pending_action"] = None
                     st.stop()
 
+                permitido_login, _ = verificar_rate_limit_login(email, ip_cliente)
+                if not permitido_login:
+                    st.error("Não foi possível entrar. Verifique email e senha e tente novamente.")
+                    st.session_state["auth_processing"] = False
+                    st.session_state["auth_pending_action"] = None
+                    st.stop()
+
                 if not processar_login(email, senha):
+                    registrar_falha_login(email, ip_cliente)
                     st.error("Não foi possível entrar. Verifique email e senha e tente novamente.")
                     st.session_state["auth_processing"] = False
                     st.session_state["auth_pending_action"] = None
@@ -192,6 +268,8 @@ if "user_id" not in st.session_state:
     st.stop()
 
 
+usuario_id = st.session_state.user_id
+_check_session_idle_timeout()
 usuario_id = st.session_state.user_id
 if not usuario_pode_acessar_plataforma(usuario_id):
     del st.session_state["user_id"]

@@ -41,26 +41,36 @@ from banco import (
     admin_series_leads_30_dias,
     admin_ultimos_leads,
     admin_ultimos_usuarios,
+    registrar_admin_audit,
+    usuario_eh_admin,
 )
 
-# Normalizado em minúsculas para comparação segura.
-ADMIN_MASTER_EMAIL = os.environ.get(
-    "ADMIN_MASTER_EMAIL", "matheus.filadelfo@gmail.com"
-).strip().lower()
+def _admin_master_email() -> str | None:
+    raw = os.environ.get("ADMIN_MASTER_EMAIL")
+    if not raw or not str(raw).strip():
+        return None
+    return str(raw).strip().lower()
 
 
-def is_admin_master(email: str | None) -> bool:
+def is_admin_master(email: str | None, user_id: int | None = None) -> bool:
+    master = _admin_master_email()
+    if not master:
+        return False
     if not email or not str(email).strip():
         return False
-    return str(email).strip().lower() == ADMIN_MASTER_EMAIL
+    if str(email).strip().lower() != master:
+        return False
+    if user_id is None:
+        return False
+    return usuario_eh_admin(user_id)
 
 
-def apply_sidebar_admin_visibility(email: str | None) -> None:
+def apply_sidebar_admin_visibility(email: str | None, user_id: int | None = None) -> None:
     """
     Oculta o item da página admin no menu lateral para quem não é master.
     Depende da estrutura do Streamlit multipage (href contém 'admin').
     """
-    if is_admin_master(email):
+    if is_admin_master(email, user_id):
         return
     st.markdown(
         """
@@ -797,7 +807,13 @@ def _render_funil_comercial() -> None:
         salvar = st.form_submit_button("Salvar alterações")
 
     if salvar:
-        admin_crm_atualizar_lead(lid, status=novo_status, observacoes=obs_txt)
+        actor = st.session_state.get("user_id")
+        admin_crm_atualizar_lead(
+            lid,
+            status=novo_status,
+            observacoes=obs_txt,
+            actor_admin_id=actor,
+        )
         st.success("Lead atualizado.")
         st.rerun()
 
@@ -831,7 +847,7 @@ def _render_admin_gestao_acessos() -> None:
             format_func=lambda u: f"{u} · {by_id[u][1]}",
         )
         row = by_id[sel_uid]
-        master_alvo = is_admin_master(row[1])
+        master_alvo = is_admin_master(row[1], int(row[0]))
 
         c1, c2 = st.columns(2)
         with c1:
@@ -871,15 +887,33 @@ def _render_admin_gestao_acessos() -> None:
             st.error("Não é permitido suspender o administrador master.")
             return
 
-        ok_b = admin_definir_bloqueio_usuario(sel_uid, 1 if bloquear else 0)
+        actor = st.session_state.get("user_id")
+        ok_b = admin_definir_bloqueio_usuario(
+            sel_uid,
+            1 if bloquear else 0,
+            actor_admin_id=actor,
+        )
         if not ok_b:
             st.error("Não foi possível alterar o bloqueio (usuário protegido).")
             return
 
-        ok_p = admin_definir_plano_e_status(sel_uid, plano, status_a)
+        ok_p = admin_definir_plano_e_status(
+            sel_uid,
+            plano,
+            status_a,
+            actor_admin_id=actor,
+        )
         if not ok_p:
             st.error("Não foi possível aplicar plano/status (usuário protegido).")
             return
+
+        registrar_admin_audit(
+            admin_user_id=actor,
+            action="admin_apply_user_changes",
+            target_type="usuario",
+            target_id=str(sel_uid),
+            details=f"bloqueado={1 if bloquear else 0};plano={plano};status={status_a}",
+        )
 
         st.success("Alterações aplicadas.")
         st.rerun()
