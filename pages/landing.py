@@ -6,6 +6,7 @@ from urllib.parse import quote
 import streamlit as st
 
 from banco import criar_tabelas, salvar_lead_demonstracao
+from config_pricing import STARTER, PRO, BUSINESS
 from ui.theme import apply_global_theme
 
 # Número WhatsApp (apenas dígitos, ex.: 5511987654321). Sobrescreva com MP_WHATSAPP_PHONE.
@@ -68,7 +69,7 @@ st.markdown(
         border: 1px solid rgba(96, 165, 250, 0.35);
         background: linear-gradient(145deg, rgba(15,23,42,0.95), rgba(17,24,39,0.96));
         box-shadow: 0 0 0 1px rgba(59,130,246,0.14), 0 26px 60px rgba(2,6,23,0.5), 0 0 45px rgba(59,130,246,0.18);
-        color: #e2e8f0;
+        color: #f8fafc;
         animation: mpUp 0.35s ease;
     }
     .mp-brand { font-size: 0.95rem; color: #93c5fd; font-weight: 700; margin-bottom: 0.55rem; }
@@ -87,17 +88,17 @@ st.markdown(
     }
     .mp-section-title {
         margin: 1.65rem 0 0.72rem 0;
-        color: #f1f5f9;
+        color: #ffffff;
         font-size: 1.22rem;
-        font-weight: 800;
+        font-weight: 700;
         letter-spacing: 0.01em;
     }
     .mp-card {
-        background: rgba(15, 23, 42, 0.82);
+        background: rgba(15,23,42,.88);
         border: 1px solid rgba(148, 163, 184, 0.24);
         border-radius: 16px;
         padding: 1rem;
-        color: #e2e8f0;
+        color: #f8fafc;
         height: 100%;
         transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
@@ -113,9 +114,9 @@ st.markdown(
     .mp-pricing {
         border: 1px solid rgba(148,163,184,0.24);
         border-radius: 16px;
-        background: rgba(15,23,42,0.82);
+        background: rgba(15,23,42,.88);
         padding: 1rem;
-        color: #e2e8f0;
+        color: #f8fafc;
     }
     .mp-pricing.mp-pricing-featured {
         border: 1px solid rgba(212,175,55,0.55);
@@ -143,9 +144,9 @@ st.markdown(
         padding: 1rem 1.15rem;
         border-radius: 16px;
         border: 1px solid rgba(96,165,250,0.28);
-        background: rgba(15,23,42,0.72);
+        background: rgba(15,23,42,.88);
         text-align: center;
-        color: #e2e8f0;
+        color: #f8fafc;
         font-size: 1.05rem;
         font-weight: 700;
         letter-spacing: 0.02em;
@@ -201,27 +202,27 @@ st.markdown(
     .mp-objection {
         border: 1px solid rgba(148,163,184,0.22);
         border-radius: 14px;
-        background: rgba(15,23,42,0.78);
+        background: rgba(15,23,42,.88);
         padding: 0.92rem 1rem;
         height: 100%;
     }
     .mp-objection strong {
         display: block;
-        color: #e2e8f0;
+        color: #ffffff;
         font-size: 0.95rem;
         margin-bottom: 0.45rem;
         font-weight: 700;
     }
     .mp-objection p {
         margin: 0;
-        color: #94a3b8;
+        color: #cbd5e1;
         font-size: 0.88rem;
         line-height: 1.48;
     }
     .mp-faq {
         border: 1px solid rgba(148,163,184,0.24);
         border-radius: 12px;
-        background: rgba(15,23,42,0.75);
+        background: rgba(15,23,42,.88);
         padding: 0.85rem 0.95rem;
         margin-bottom: 0.55rem;
     }
@@ -229,9 +230,9 @@ st.markdown(
         margin-top: 1.25rem;
         padding: 1.2rem 1.35rem;
         border-radius: 16px;
-        background: linear-gradient(135deg, rgba(30,41,59,0.95), rgba(30,64,175,0.35));
+        background: linear-gradient(135deg, rgba(15,23,42,.88), rgba(30,64,175,0.35));
         border: 1px solid rgba(212,175,55,0.30);
-        color: #e2e8f0;
+        color: #f8fafc;
     }
     @keyframes mpUp {
         from { opacity: 0.6; transform: translateY(6px); }
@@ -264,14 +265,14 @@ st.markdown(
         box-shadow: 0 12px 32px rgba(2,6,23,0.35), 0 0 22px rgba(52,211,153,0.12);
     }
     .mp-lead-success .mp-lead-success-title {
-        color: #ecfdf5;
+        color: #ffffff;
         font-size: 1.18rem;
         font-weight: 800;
         margin: 0 0 0.4rem 0;
         letter-spacing: 0.01em;
     }
     .mp-lead-success .mp-lead-success-sub {
-        color: #a7f3d0;
+        color: #cbd5e1;
         font-size: 1.02rem;
         margin: 0;
     }
@@ -413,9 +414,9 @@ st.markdown(
 
 st.markdown('<div class="mp-section-title">Planos resumidos</div>', unsafe_allow_html=True)
 p1, p2, p3 = st.columns(3)
-p1.markdown('<div class="mp-pricing"><div class="badge">START</div><h4>Starter</h4><p><b>R$97/mês</b></p><p>Trial: 7 dias grátis ou 3 análises.</p></div>', unsafe_allow_html=True)
-p2.markdown('<div class="mp-pricing mp-pricing-featured"><div class="badge">MAIS RECOMENDADO</div><h4>Pro</h4><p><b>R$197/mês</b></p><p>Mais análises, PDF premium e escala operacional.</p></div>', unsafe_allow_html=True)
-p3.markdown('<div class="mp-pricing"><div class="badge">ESCALA</div><h4>Business</h4><p><b>R$397/mês</b></p><p>Capacidade máxima para operação de alto volume.</p></div>', unsafe_allow_html=True)
+p1.markdown(f'<div class="mp-pricing"><div class="badge">START</div><h4>Starter</h4><p><b>R${STARTER}/mês</b></p><p>Trial: 7 dias grátis ou 3 análises.</p></div>', unsafe_allow_html=True)
+p2.markdown(f'<div class="mp-pricing mp-pricing-featured"><div class="badge">MAIS RECOMENDADO</div><h4>Pro</h4><p><b>R${PRO}/mês</b></p><p>Mais análises, PDF premium e escala operacional.</p></div>', unsafe_allow_html=True)
+p3.markdown(f'<div class="mp-pricing"><div class="badge">ESCALA</div><h4>Business</h4><p><b>R${BUSINESS}/mês</b></p><p>Capacidade máxima para operação de alto volume.</p></div>', unsafe_allow_html=True)
 
 _whatsapp_strategic_block("landing_wa_cta_planos")
 
@@ -548,7 +549,7 @@ st.markdown(
     + MP_WA_URGENCY
     + """</div>
   <h3 style="margin: 0 0 0.35rem 0;">Pronto para decidir com segurança?</h3>
-  <div style="color:#cbd5e1;">Priorize <strong style="color:#e2e8f0;">Agendar Demonstração</strong> com nosso time ou inicie o teste estratégico gratuito — sem cartão.</div>
+  <div style="color:#cbd5e1;">Priorize <strong style="color:#ffffff;">Agendar Demonstração</strong> com nosso time ou inicie o teste estratégico gratuito — sem cartão.</div>
 </div>
 """,
     unsafe_allow_html=True,

@@ -12,6 +12,7 @@ from datetime import date, timedelta
 import altair as alt
 import pandas as pd
 import streamlit as st
+from config_pricing import PRO, BUSINESS
 
 from banco import (
     LEAD_CRM_STATUSES,
@@ -145,10 +146,10 @@ _PLANO_FIN_LABEL = {"FREE": "Trial / Free", "PRO": "Pro", "PREMIUM": "Business"}
 
 def _render_financeiro_executivo() -> None:
     st.markdown(
-        """
+        f"""
 <div class="mp-fin-wrap">
   <div class="mp-fin-title">Financeiro Executivo</div>
-  <div class="mp-fin-sub">MRR em catálogo (PRO R$197 · PREMIUM R$397) · checkout como proxy de fluxo</div>
+  <div class="mp-fin-sub">MRR em catálogo (PRO R${PRO} · PREMIUM R${BUSINESS}) · checkout como proxy de fluxo</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -373,12 +374,12 @@ def render_admin_dashboard() -> None:
         box-shadow: 0 18px 46px rgba(2,6,23,0.48), 0 0 36px rgba(59,130,246,0.14);
         margin-bottom: 1rem;
     }
-    .mp-admin-title { margin: 0; font-size: 1.55rem; font-weight: 900; color: #f8fafc; letter-spacing: 0.02em; }
+    .mp-admin-title { margin: 0; font-size: 1.55rem; font-weight: 700; color: #ffffff; letter-spacing: 0.02em; }
     .mp-admin-sub { margin: 0.45rem 0 0 0; color: #cbd5e1; font-size: 0.95rem; }
     .mp-admin-kpi {
         border: 1px solid rgba(148,163,184,0.28);
         border-radius: 14px;
-        background: rgba(15,23,42,0.82);
+        background: rgba(15,23,42,.88);
         padding: 0.85rem 1rem;
         box-shadow: 0 10px 26px rgba(2,6,23,0.32);
     }
@@ -388,7 +389,7 @@ def render_admin_dashboard() -> None:
     .mp-admin-block {
         border: 1px solid rgba(148,163,184,0.22);
         border-radius: 14px;
-        background: rgba(15,23,42,0.76);
+        background: rgba(15,23,42,.88);
         padding: 0.9rem 1rem;
         margin-top: 0.65rem;
     }
@@ -415,7 +416,7 @@ def render_admin_dashboard() -> None:
     .mp-crm-kpi {
         border: 1px solid rgba(167,139,250,0.28);
         border-radius: 14px;
-        background: rgba(15,23,42,0.78);
+        background: rgba(15,23,42,.88);
         padding: 0.75rem 0.85rem;
     }
     .mp-crm-kpi .lab {
@@ -428,7 +429,7 @@ def render_admin_dashboard() -> None:
     .mp-crm-kpi .val {
         font-size: 1.35rem;
         font-weight: 900;
-        color: #faf5ff;
+        color: #f8fafc;
         margin-top: 0.2rem;
     }
     .mp-fin-wrap {
@@ -443,14 +444,14 @@ def render_admin_dashboard() -> None:
         margin: 0 0 0.3rem 0;
         font-size: 1.22rem;
         font-weight: 900;
-        color: #fefce8;
+        color: #ffffff;
         letter-spacing: 0.02em;
     }
-    .mp-fin-sub { margin: 0 0 1rem 0; color: #a8a29e; font-size: 0.88rem; }
+    .mp-fin-sub { margin: 0 0 1rem 0; color: #cbd5e1; font-size: 0.88rem; }
     .mp-fin-kpi {
         border: 1px solid rgba(212,175,55,0.28);
         border-radius: 14px;
-        background: rgba(15,23,42,0.82);
+        background: rgba(15,23,42,.88);
         padding: 0.72rem 0.85rem;
     }
     .mp-fin-kpi .lab {
@@ -463,23 +464,23 @@ def render_admin_dashboard() -> None:
     .mp-fin-kpi .val {
         font-size: 1.28rem;
         font-weight: 900;
-        color: #fffbeb;
+        color: #f8fafc;
         margin-top: 0.18rem;
     }
     .mp-fin-ind {
         border: 1px solid rgba(148,163,184,0.22);
         border-radius: 12px;
-        background: rgba(30,41,59,0.65);
+        background: rgba(15,23,42,.88);
         padding: 0.65rem 0.8rem;
         text-align: center;
     }
     .mp-fin-ind .lv { font-size: 0.72rem; color: #94a3b8; font-weight: 700; }
-    .mp-fin-ind .vv { font-size: 1.15rem; font-weight: 900; color: #e2e8f0; margin-top: 0.2rem; }
+    .mp-fin-ind .vv { font-size: 1.15rem; font-weight: 900; color: #f8fafc; margin-top: 0.2rem; }
     .mp-alert-stack { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 1rem; }
     .mp-alert-item {
         border-radius: 12px; padding: 0.75rem 1rem;
         border: 1px solid rgba(148,163,184,0.22);
-        background: rgba(15,23,42,0.72);
+        background: rgba(15,23,42,.88);
     }
     .mp-alert-item-title { font-size: 0.82rem; font-weight: 800; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
     .mp-alert-item-text { font-size: 0.88rem; color: #cbd5e1; line-height: 1.45; }
@@ -494,7 +495,7 @@ def render_admin_dashboard() -> None:
     .mp-alert-neutral {
         border-radius: 12px; padding: 0.65rem 1rem; margin-bottom: 1rem;
         border: 1px dashed rgba(148,163,184,0.35);
-        background: rgba(15,23,42,0.5);
+        background: rgba(15,23,42,.88);
         font-size: 0.88rem; color: #94a3b8;
     }
 </style>
@@ -553,7 +554,7 @@ def render_admin_dashboard() -> None:
         )
 
     st.caption(
-        "Receita estimada = assinaturas ativas × tabela (FREE R$0 · PRO R$197 · PREMIUM R$397). "
+        f"Receita estimada = assinaturas ativas × tabela (FREE R$0 · PRO R${PRO} · PREMIUM R${BUSINESS}). "
         "Não substitui financeiro."
     )
 

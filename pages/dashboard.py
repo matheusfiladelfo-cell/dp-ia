@@ -34,12 +34,12 @@ st.markdown(
         color: #f8fafc;
         margin-bottom: 0.85rem;
     }
-    .mp-title { margin: 0; font-size: 1.4rem; font-weight: 800; }
+    .mp-title { margin: 0; font-size: 1.4rem; font-weight: 700; color: #ffffff; }
     .mp-sub { margin-top: 0.3rem; color: #cbd5e1; }
     .mp-kpi {
         border: 1px solid rgba(148,163,184,0.24);
         border-radius: 14px;
-        background: rgba(15,23,42,0.78);
+        background: rgba(15,23,42,.88);
         padding: 0.75rem 0.8rem;
         transition: transform 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
@@ -53,14 +53,14 @@ st.markdown(
         border-radius: 14px;
         background: linear-gradient(145deg, rgba(15,23,42,0.88), rgba(30,64,175,0.22));
         padding: 0.9rem;
-        color: #e2e8f0;
+        color: #f8fafc;
     }
     .mp-summary {
         border: 1px solid rgba(148,163,184,0.24);
         border-radius: 14px;
-        background: rgba(15,23,42,0.78);
+        background: rgba(15,23,42,.88);
         padding: 0.9rem 1rem;
-        color: #e2e8f0;
+        color: #f8fafc;
         margin-top: 0.6rem;
     }
     .mp-summary ul {
@@ -70,7 +70,7 @@ st.markdown(
     .mp-section-title {
         margin-top: 0.55rem;
         margin-bottom: 0.3rem;
-        color: #e2e8f0;
+        color: #ffffff;
         font-weight: 700;
         letter-spacing: 0.01em;
     }

@@ -2,14 +2,15 @@ import os
 import uuid
 
 import requests
+from config_pricing import PRO, PREMIUM
 
 
 PROVIDER_ASAAS = "ASAAS"
 PROVIDER_MERCADO_PAGO = "MERCADO_PAGO"
 
 PLANOS_PRECO = {
-    "PRO": 297.0,
-    "PREMIUM": 890.0,
+    "PRO": float(PRO),
+    "PREMIUM": float(PREMIUM),
 }
 
 

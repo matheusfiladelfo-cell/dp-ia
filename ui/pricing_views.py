@@ -1,4 +1,5 @@
 import streamlit as st
+from config_pricing import STARTER, PRO, BUSINESS
 
 
 def _nome_comercial_plano(plano):
@@ -59,7 +60,7 @@ def render_planos_comparativo(plano_atual):
 <div class="pricing-card">
   <div class="pricing-badge">START</div>
   <h4 style="margin:0;">Starter{free_current}</h4>
-  <p style="margin:4px 0 10px 0;"><b>R$ 97/mês</b></p>
+  <p style="margin:4px 0 10px 0;"><b>R$ {STARTER}/mês</b></p>
   <p style="margin:0 0 6px 0; color:#475569; font-size:0.85rem;">Trial: 7 dias grátis ou 3 análises grátis</p>
   <p style="margin:0;">• Até 10 análises/mês</p>
   <p style="margin:0;">• 1 empresa</p>
@@ -76,7 +77,7 @@ def render_planos_comparativo(plano_atual):
 <div class="pricing-card recommended">
   <div class="pricing-badge">MAIS ESCOLHIDO</div>
   <h4 style="margin:0;">Pro{pro_current}</h4>
-  <p style="margin:4px 0 10px 0;"><b>R$ 197/mês</b></p>
+  <p style="margin:4px 0 10px 0;"><b>R$ {PRO}/mês</b></p>
   <p style="margin:0;">• Até 200 análises/mês</p>
   <p style="margin:0;">• Até 5 empresas</p>
   <p style="margin:0;">• PDF premium liberado</p>
@@ -92,7 +93,7 @@ def render_planos_comparativo(plano_atual):
 <div class="pricing-card">
   <div class="pricing-badge">ESCALA</div>
   <h4 style="margin:0;">Business{premium_current}</h4>
-  <p style="margin:4px 0 10px 0;"><b>R$ 397/mês</b></p>
+  <p style="margin:4px 0 10px 0;"><b>R$ {BUSINESS}/mês</b></p>
   <p style="margin:0;">• Análises ilimitadas</p>
   <p style="margin:0;">• Empresas ilimitadas</p>
   <p style="margin:0;">• PDF premium liberado</p>

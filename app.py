@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import re
+from config_pricing import PRO, BUSINESS
 
 from banco import (
     criar_tabelas,
@@ -321,9 +322,9 @@ provedor_pagamento = st.selectbox(
 )
 col_upgrade_1, col_upgrade_2 = st.columns(2)
 with col_upgrade_1:
-    assinar_pro = st.button("💳 Assinar Pro • R$197", width="stretch")
+    assinar_pro = st.button(f"💳 Assinar Pro • R${PRO}", width="stretch")
 with col_upgrade_2:
-    assinar_premium = st.button("💳 Assinar Business • R$397", width="stretch")
+    assinar_premium = st.button(f"💳 Assinar Business • R${BUSINESS}", width="stretch")
 
 if assinar_pro or assinar_premium:
     plano_destino = "PRO" if assinar_pro else "PREMIUM"

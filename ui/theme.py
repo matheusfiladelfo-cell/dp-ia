@@ -11,6 +11,7 @@ def apply_global_theme():
     --mp-bg-3: #0f172a;
     --mp-text: #f8fafc;
     --mp-text-soft: #cbd5e1;
+    --mp-placeholder: #94a3b8;
     --mp-blue: #3b82f6;
     --mp-blue-soft: #93c5fd;
     --mp-gold: #d4af37;
@@ -28,17 +29,19 @@ html, body, [class*="css"] {
 }
 
 h1, h2, h3 {
-    font-weight: 800 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
     line-height: 1.2 !important;
 }
 
 h4, h5 {
+    color: #ffffff !important;
     font-weight: 700 !important;
 }
 
 p, li, label, .stMarkdown {
     line-height: 1.55;
-    color: var(--mp-text);
+    color: var(--mp-text) !important;
 }
 
 p, li, .stCaption, small {
@@ -46,7 +49,7 @@ p, li, .stCaption, small {
 }
 
 label, .stTextInput label, .stTextArea label, .stSelectbox label {
-    color: #e2e8f0 !important;
+    color: var(--mp-text) !important;
     font-weight: 600 !important;
 }
 
@@ -87,18 +90,48 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
 .stSelectbox > div > div,
 .stDateInput > div > div,
 .stNumberInput input {
-    background: rgba(15, 23, 42, 0.76) !important;
-    color: var(--mp-text) !important;
-    border: 1px solid rgba(148,163,184,0.25) !important;
+    background: #0f172a !important;
+    color: #ffffff !important;
+    border: 1px solid #334155 !important;
     border-radius: 12px !important;
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stTextInput > div > div > input::placeholder,
+.stTextArea textarea::placeholder,
+.stNumberInput input::placeholder {
+    color: var(--mp-placeholder) !important;
+    opacity: 1;
 }
 
 .stTextInput > div > div > input:focus,
 .stTextArea textarea:focus,
 .stNumberInput input:focus {
-    border-color: rgba(96,165,250,0.55) !important;
+    border-color: #60a5fa !important;
     box-shadow: 0 0 0 1px rgba(59,130,246,0.25), 0 0 18px rgba(59,130,246,0.14);
+}
+
+.stSelectbox > div > div:hover,
+.stDateInput > div > div:hover {
+    border-color: #60a5fa !important;
+}
+
+/* BaseWeb select/dropdown consistency for dark theme */
+div[data-baseweb="select"] > div {
+    background: #0f172a !important;
+    color: #ffffff !important;
+    border: 1px solid #334155 !important;
+}
+
+div[data-baseweb="popover"] ul,
+div[data-baseweb="popover"] li,
+div[data-baseweb="select"] * {
+    color: #ffffff !important;
+}
+
+div[data-baseweb="menu"] {
+    background: #0f172a !important;
+    border: 1px solid #334155 !important;
 }
 
 .stButton > button,
@@ -106,7 +139,7 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
     border-radius: 12px !important;
     border: 1px solid rgba(147,197,253,0.45) !important;
     background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
-    color: #f8fafc !important;
+    color: #ffffff !important;
     font-weight: 700 !important;
     transition: transform 0.16s ease, box-shadow 0.2s ease, filter 0.2s ease !important;
 }
@@ -116,6 +149,7 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
     transform: translateY(-1px);
     box-shadow: 0 12px 24px rgba(29,78,216,0.35), 0 0 18px rgba(96,165,250,0.24);
     filter: brightness(1.04);
+    border-color: #60a5fa !important;
 }
 
 .stButton > button:active,
@@ -130,7 +164,7 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
 .dpia-report-card {
     border: 1px solid rgba(147,197,253,0.30);
     border-radius: 14px;
-    background: rgba(30,41,59,0.82);
+    background: rgba(15,23,42,0.88);
     padding: 1rem 1.05rem;
     margin-bottom: 0.85rem;
     box-shadow: 0 0 0 1px rgba(59,130,246,0.08), 0 10px 26px rgba(2,6,23,0.35);
@@ -148,7 +182,7 @@ label, .stTextInput label, .stTextArea label, .stSelectbox label {
 .mp-empty-state {
     border: 1px solid rgba(147,197,253,0.30);
     border-radius: 14px;
-    background: rgba(30,41,59,0.80);
+    background: rgba(15,23,42,0.88);
     padding: 0.85rem 1rem;
     margin: 0.55rem 0;
     color: var(--mp-text);
