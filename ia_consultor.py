@@ -642,6 +642,8 @@ def _normalizar_blocos_executivos(parecer, confiabilidades=None):
     parecer["decisao_empresarial"] = decisao
     parecer["assistente_juridico"] = assistente
     parecer["proxima_acao"] = proxima
+    # Campo explícito para UI/API (ação imediata já consolidada em proxima_acao.hoje).
+    parecer["proxima_acao_recomendada"] = str(proxima.get("hoje", "")).strip()
 
     confiabilidades = confiabilidades or {}
     parecer["decisao_empresarial_confianca"] = (

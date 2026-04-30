@@ -1,6 +1,7 @@
 # score_engine.py
 
 import re
+import unicodedata
 
 
 def tipo_efetivo_para_score(dados):
@@ -84,6 +85,184 @@ def _probabilidade_por_score(score):
     # Curva simples e contínua (sem saltos agressivos).
     prob = int(round(8 + (score * 0.82)))
     return max(10, min(prob, 88))
+
+
+_RISCO_ORDEM = {
+    "BAIXO": 0,
+    "INCONCLUSIVO": 0,
+    "MÉDIO": 1,
+    "MEDIO": 1,
+    "MÉDIO-ALTO": 2,
+    "MEDIO-ALTO": 2,
+    "ALTO": 3,
+}
+
+_RISCO_POR_ORDEM = {
+    0: "BAIXO",
+    1: "MÉDIO",
+    2: "MÉDIO-ALTO",
+    3: "ALTO",
+}
+
+
+def _normalizar_label_risco(risco):
+    r = str(risco or "").strip().upper()
+    if r in {"MEDIO", "MÉDIO"}:
+        return "MÉDIO"
+    if r in {"MEDIO-ALTO", "MÉDIO-ALTO"}:
+        return "MÉDIO-ALTO"
+    if r in {"ALTO", "BAIXO", "INCONCLUSIVO"}:
+        return r
+    return "BAIXO"
+
+
+def _ancoragem_juridica_minima(case_data):
+    """
+    Camada de ancoragem jurídica: só eleva risco quando houver indício mínimo.
+    Não altera perguntas, não reduz risco e não substitui a IA.
+    """
+    texto = str(case_data.get("texto") or case_data.get("descricao") or "").lower()
+    if not texto:
+        return {"minimo": None, "fatores": []}
+    texto_norm = "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+
+    fatores = []
+    # 1) verbas não pagas -> mínimo MÉDIO
+    if any(
+        t in texto_norm
+        for t in [
+            "nao paguei",
+            "nao quitou",
+            "verbas nao pagas",
+            "verbas rescisorias nao pagas",
+        ]
+    ):
+        fatores.append(("verbas_nao_pagas", "MÉDIO"))
+    # 2) gestante/gravidez -> mínimo ALTO
+    if any(t in texto_norm for t in ["gestante", "gravidez", "gravida"]):
+        fatores.append(("gestante", "ALTO"))
+    # 3) acidente/CAT/afastamento -> mínimo ALTO
+    if any(t in texto_norm for t in ["acidente", "cat", "afastamento"]):
+        fatores.append(("acidente_cat_afastamento", "ALTO"))
+    # 4) PJ/pejotização -> mínimo MÉDIO
+    if any(t in texto_norm for t in ["contrato pj", " pj ", "pejotizacao", "pj, ", "pj."]):
+        fatores.append(("pj_fraudulento", "MÉDIO"))
+    # 5) horas extras sem pagamento -> mínimo MÉDIO
+    if any(t in texto_norm for t in ["horas extras", "nao paga hora extra"]):
+        fatores.append(("horas_extras", "MÉDIO"))
+
+    if not fatores:
+        return {"minimo": None, "fatores": []}
+
+    minimo_ordem = max(_RISCO_ORDEM[label] for _, label in fatores)
+
+    # 6) múltiplos fatores -> elevar um nível
+    if len(fatores) >= 2:
+        minimo_ordem = min(3, minimo_ordem + 1)
+
+    return {"minimo": _RISCO_POR_ORDEM[minimo_ordem], "fatores": [f[0] for f in fatores]}
+
+
+def _ancoragem_comportamental(case_data):
+    """
+    Captura risco implícito de linguagem empresarial.
+    Só eleva risco final quando há sinais comportamentais/litígio.
+    """
+    texto = str(case_data.get("texto") or case_data.get("descricao") or "").lower()
+    if not texto:
+        return {"minimo": None, "delta_niveis": 0, "fatores": []}
+
+    texto_norm = "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+
+    fatores = []
+    sinais_litigio = [
+        "advogado",
+        "processo",
+        "processar",
+        "acao",
+        "juntar documento",
+        "procurar advogado",
+        "entrar na justica",
+    ]
+    if any(t in texto_norm for t in sinais_litigio):
+        fatores.append("litigio_implicito")
+
+    sinais_suspeitos = [
+        "saiu brigado",
+        "discussao",
+        "conflito",
+        "ta estranho",
+        "ameacou",
+        "problema",
+        "nao sei se fiz certo",
+    ]
+    suspeito = any(t in texto_norm for t in sinais_suspeitos)
+    if suspeito:
+        fatores.append("comportamento_suspeito")
+
+    sinais_acordo = ["acordo", "quer sair", "negociar saida"]
+    if any(t in texto_norm for t in sinais_acordo):
+        fatores.append("intencao_acordo")
+
+    # Múltiplos sinais comportamentais/litígio: eleva direto para ALTO.
+    if len(fatores) >= 2:
+        return {"minimo": "ALTO", "delta_niveis": 0, "fatores": fatores}
+
+    minimo = "MÉDIO" if any(f in fatores for f in ["litigio_implicito", "intencao_acordo"]) else None
+    delta = 1 if suspeito else 0
+    return {"minimo": minimo, "delta_niveis": delta, "fatores": fatores}
+
+
+def _normalizacao_final_risco(case_data, score_total, nivel_atual, hard_rule, ancora_comport):
+    """
+    Camada final anti-subestimação:
+    - nunca reduz risco
+    - apenas eleva quando necessário
+    """
+    texto = str(case_data.get("texto") or case_data.get("descricao") or "").lower()
+    texto_norm = "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+
+    ordem_atual = _RISCO_ORDEM.get(_normalizar_label_risco(nivel_atual), 0)
+    ordem_alvo = ordem_atual
+
+    # Regra 1: 2+ fatores (jurídico ou comportamental) -> mínimo ALTO
+    fatores_juridicos = sum(1 for _, ativo in (hard_rule or {}).items() if bool(ativo))
+    fatores_comport = len((ancora_comport or {}).get("fatores") or [])
+    total_fatores = fatores_juridicos + fatores_comport
+    if total_fatores >= 2:
+        ordem_alvo = max(ordem_alvo, _RISCO_ORDEM["ALTO"])
+
+    # Regra 2 e 3: piso por score
+    if score_total >= 75:
+        ordem_alvo = max(ordem_alvo, _RISCO_ORDEM["ALTO"])
+    elif score_total >= 60:
+        ordem_alvo = max(ordem_alvo, _RISCO_ORDEM["MÉDIO"])
+
+    # Regra 4: não pagamento / passivo acumulado / dúvida de regularidade -> mínimo MÉDIO
+    sinais_normalizacao = [
+        "nao paguei",
+        "nao quitou",
+        "verbas nao pagas",
+        "passivo acumulado",
+        "ao longo dos anos",
+        "nao sei se fiz certo",
+        "acho que nem tudo foi pago certinho",
+        "nao sei se pode dar problema",
+    ]
+    if any(s in texto_norm for s in sinais_normalizacao):
+        ordem_alvo = max(ordem_alvo, _RISCO_ORDEM["MÉDIO"])
+
+    # Regra 5: risco jurídico + comportamental juntos -> +1 nível
+    if fatores_juridicos >= 1 and fatores_comport >= 1:
+        ordem_alvo = min(_RISCO_ORDEM["ALTO"], ordem_alvo + 1)
+
+    return _RISCO_POR_ORDEM.get(ordem_alvo, nivel_atual), total_fatores
 
 
 def _detectar_hard_rule_juridica(case_data):
@@ -471,6 +650,83 @@ def calcular_score(case_data):
             prob = max(prob, _probabilidade_por_score(55))
             nivel = "MÉDIO"
             motivos.append({"fator": "Hard rule 10F: assédio com indícios consistentes", "impacto": 55})
+
+    # Camada adicional de ancoragem jurídica mínima (somente correção de subestimação).
+    risco_ancora = _ancoragem_juridica_minima(case_data)
+    minimo = risco_ancora.get("minimo")
+    if minimo:
+        nivel_norm = _normalizar_label_risco(nivel)
+        if _RISCO_ORDEM.get(nivel_norm, 0) < _RISCO_ORDEM.get(minimo, 0):
+            nivel = minimo
+            if minimo == "MÉDIO":
+                score_total = max(score_total, 42)
+            elif minimo == "MÉDIO-ALTO":
+                score_total = max(score_total, 55)
+            elif minimo == "ALTO":
+                score_total = max(score_total, 75)
+            prob = max(prob, _probabilidade_por_score(score_total))
+            fatores = ", ".join(risco_ancora.get("fatores") or [])
+            motivos.append(
+                {
+                    "fator": f"Ancoragem jurídica mínima: elevação por indícios ({fatores})",
+                    "impacto": score_total,
+                }
+            )
+
+    # Camada adicional de ancoragem comportamental (risco implícito).
+    ancora_comport = _ancoragem_comportamental(case_data)
+    nivel_norm = _normalizar_label_risco(nivel)
+    ordem_atual = _RISCO_ORDEM.get(nivel_norm, 0)
+    ordem_alvo = ordem_atual
+
+    minimo_comp = ancora_comport.get("minimo")
+    if minimo_comp:
+        ordem_alvo = max(ordem_alvo, _RISCO_ORDEM.get(minimo_comp, 0))
+
+    delta_comp = int(ancora_comport.get("delta_niveis") or 0)
+    if delta_comp > 0:
+        ordem_alvo = min(3, ordem_alvo + delta_comp)
+
+    if ordem_alvo > ordem_atual:
+        nivel = _RISCO_POR_ORDEM[ordem_alvo]
+        if nivel == "MÉDIO":
+            score_total = max(score_total, 42)
+        elif nivel == "MÉDIO-ALTO":
+            score_total = max(score_total, 55)
+        elif nivel == "ALTO":
+            score_total = max(score_total, 75)
+        prob = max(prob, _probabilidade_por_score(score_total))
+        fatores = ", ".join(ancora_comport.get("fatores") or [])
+        motivos.append(
+            {
+                "fator": f"Ancoragem comportamental: elevação por sinais implícitos ({fatores})",
+                "impacto": score_total,
+            }
+        )
+
+    # Camada final de normalização anti-subestimação.
+    nivel_normalizado, total_fatores = _normalizacao_final_risco(
+        case_data=case_data,
+        score_total=score_total,
+        nivel_atual=nivel,
+        hard_rule=hard_rule,
+        ancora_comport=ancora_comport,
+    )
+    if _RISCO_ORDEM.get(_normalizar_label_risco(nivel_normalizado), 0) > _RISCO_ORDEM.get(_normalizar_label_risco(nivel), 0):
+        nivel = nivel_normalizado
+        if nivel == "MÉDIO":
+            score_total = max(score_total, 42)
+        elif nivel == "MÉDIO-ALTO":
+            score_total = max(score_total, 55)
+        elif nivel == "ALTO":
+            score_total = max(score_total, 75)
+        prob = max(prob, _probabilidade_por_score(score_total))
+        motivos.append(
+            {
+                "fator": f"Normalização final anti-subestimação (fatores={total_fatores})",
+                "impacto": score_total,
+            }
+        )
 
     return {
         "score": score_total,

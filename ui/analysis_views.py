@@ -109,12 +109,39 @@ border: 1px solid rgba(255,255,255,0.18);
     )
 
 
+def _formatar_proxima_acao_recomendada(parecer: dict) -> str:
+    """
+    Monta a linha visível ao usuário a partir do parecer.
+    Prioriza a ação vinda do fluxo (proxima_acao.hoje), não o veredito genérico.
+    """
+    executivo = parecer.get("parecer_executivo") if isinstance(parecer.get("parecer_executivo"), dict) else {}
+    proxima = parecer.get("proxima_acao") if isinstance(parecer.get("proxima_acao"), dict) else {}
+    veredito = parecer.get("veredito_estrategico") if isinstance(parecer.get("veredito_estrategico"), dict) else {}
+
+    candidatos = [
+        str(parecer.get("proxima_acao_recomendada") or "").strip(),
+        str(executivo.get("proxima_acao_recomendada") or "").strip(),
+        str(proxima.get("hoje") or "").strip(),
+        str(veredito.get("principal_proximo_passo") or "").strip(),
+        str(parecer.get("recomendacao") or "").strip(),
+    ]
+    texto = next((c for c in candidatos if c), "")
+    if not texto:
+        texto = "Consolidar fatos e documentos essenciais antes da decisão."
+
+    low = texto.lower()
+    if low.startswith("próxima ação recomendada") or low.startswith("proxima acao recomendada"):
+        return texto
+    return f"Próxima ação recomendada: {texto}"
+
+
 def render_parecer_sections(parecer, limpar_texto_fn):
     st.markdown("### Relatório Executivo")
 
     veredito = parecer.get("veredito_estrategico") or {}
     decisao = parecer.get("decisao_empresarial") or {}
     proxima = parecer.get("proxima_acao") or {}
+    linha_proxima_acao = _formatar_proxima_acao_recomendada(parecer)
 
     st.markdown(
         f"""
@@ -122,9 +149,9 @@ def render_parecer_sections(parecer, limpar_texto_fn):
   <strong>Resumo Executivo</strong><br>
   {limpar_texto_fn(veredito.get("resumo_executivo_1_linha") or parecer.get("diagnostico") or "Cenário consolidado para decisão estratégica.")}
 </div>
-<div class="dpia-report-card">
-  <strong>Recomendação Imediata</strong><br>
-  {limpar_texto_fn(veredito.get("principal_proximo_passo") or proxima.get("hoje") or parecer.get("recomendacao") or "Definir ação prioritária com base no risco atual.")}
+<div class="dpia-report-card" style="border-left: 4px solid #38bdf8;">
+  <strong>Próxima ação recomendada</strong><br>
+  {limpar_texto_fn(linha_proxima_acao)}
 </div>
 <div class="dpia-report-card">
   <strong>Risco se Nada Fazer</strong><br>

@@ -5,6 +5,19 @@ from motor_consultor import analisar_caso
 from score_engine import calcular_score, tipo_efetivo_para_score
 
 
+def _risco_rank(label):
+    mapa = {
+        "BAIXO": 0,
+        "INCONCLUSIVO": 0,
+        "MÉDIO": 1,
+        "MEDIO": 1,
+        "MÉDIO-ALTO": 2,
+        "MEDIO-ALTO": 2,
+        "ALTO": 3,
+    }
+    return mapa.get(str(label or "").upper(), 0)
+
+
 def executar_analise_e_score(texto_usuario):
     dados = analisar_texto_usuario(texto_usuario)
 
@@ -41,6 +54,11 @@ def executar_analise_e_score(texto_usuario):
             "tempo_empresa_meses": dados.get("tempo_empresa_meses") or 0,
         }
     )
+
+    # Camada de proteção: nunca reduzir risco do motor, apenas elevar quando o score
+    # (com hard rules/ancoragem jurídica) indicar nível mais crítico.
+    if _risco_rank(score_data.get("nivel")) > _risco_rank(resultado.get("risco")):
+        resultado["risco"] = score_data.get("nivel")
 
     return {
         "dados": dados,
