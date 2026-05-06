@@ -409,24 +409,14 @@ if page == "debug":
         conn = conectar()
         cursor = conn.cursor()
         email_debug = "matheus.filadelfo@gmail.com"
-        if conn.__class__.__module__.startswith("sqlite3"):
-            cursor.execute(
-                """
-                SELECT id, email, senha_hash, is_admin, criado_em
-                FROM usuarios
-                WHERE email = ?
-                """,
-                (email_debug,),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT id, email, senha_hash, is_admin, criado_em
-                FROM usuarios
-                WHERE email = %s
-                """,
-                (email_debug,),
-            )
+        cursor.execute(
+            """
+            SELECT id, email, senha_hash, is_admin, data_criacao
+            FROM usuarios
+            WHERE email = ?
+            """,
+            (email_debug,),
+        )
         resultado = cursor.fetchone()
 
         st.subheader("Resultado da query")
@@ -435,7 +425,7 @@ if page == "debug":
             st.write(f"Email: {resultado[1]}")
             st.write(f"Senha hash (banco): `{resultado[2]}`")
             st.write(f"E admin: {resultado[3]}")
-            st.write(f"Criado em: {resultado[4]}")
+            st.write(f"Data criacao (data_criacao): {resultado[4]}")
         else:
             st.warning("Usuario nao encontrado no banco de dados.")
     except Exception as e:

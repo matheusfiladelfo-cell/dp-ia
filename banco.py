@@ -500,6 +500,19 @@ def _garantir_coluna_usuarios_reset_token_expires():
         conn.close()
 
 
+def _garantir_coluna_usuarios_data_criacao():
+    """Data de cadastro do usuário (TEXT ISO); Postgres legado pode não ter criado_em."""
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN data_criacao TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
 def _garantir_coluna_analises_criado_por():
     conn = conectar()
     cursor = conn.cursor()
@@ -838,6 +851,7 @@ def criar_tabelas():
     _garantir_coluna_usuarios_nome()
     _garantir_coluna_usuarios_reset_token()
     _garantir_coluna_usuarios_reset_token_expires()
+    _garantir_coluna_usuarios_data_criacao()
     _garantir_coluna_analises_criado_por()
     _garantir_colunas_leads_crm()
     _bootstrap_admin_master()
@@ -1112,14 +1126,14 @@ def criar_usuario(email, senha, nome=None):
 
     senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
     nome_val = (nome or "").strip() or None
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
-    INSERT INTO usuarios (email, senha_hash, nome)
-    VALUES (?, ?, ?)
-    """, (email, senha_hash, nome_val))
+    INSERT INTO usuarios (email, senha_hash, nome, data_criacao)
+    VALUES (?, ?, ?, ?)
+    """, (email, senha_hash, nome_val, agora))
 
     usuario_id = cursor.lastrowid
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if IS_POSTGRES:
         sql_assinaturas = """
