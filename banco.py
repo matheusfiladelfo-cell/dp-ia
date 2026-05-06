@@ -411,6 +411,33 @@ def _garantir_coluna_usuarios_is_admin():
         conn.close()
 
 
+def _normalizar_senha_hash_db(raw):
+    """Converte senha_hash do driver (bytes ou str) para str para inspeção."""
+    if raw is None:
+        return ""
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        try:
+            return bytes(raw).decode("utf-8")
+        except Exception:
+            return ""
+    if isinstance(raw, str):
+        return raw
+    return ""
+
+
+def _senha_hash_bcrypt_valida(s: str) -> bool:
+    """
+    True se parecer um bcrypt válido ($2a$ / $2b$ / $2y$, comprimento típico).
+    Hashes corrompidos (hex SHA-256, texto curto, etc.) falham aqui.
+    """
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if len(t) < 59:
+        return False
+    return t.startswith("$2a$") or t.startswith("$2b$") or t.startswith("$2y$")
+
+
 def _bootstrap_admin_master():
     """
     Bootstrap via ADMIN_MASTER_EMAIL (+ ADMIN_MASTER_PASSWORD opcional mas recomendado):
@@ -418,6 +445,8 @@ def _bootstrap_admin_master():
     - Se ADMIN_MASTER_PASSWORD estiver definida (≥8 caracteres):
       - usuário inexistente: cria conta com essa senha (fluxo criar_usuario);
       - usuário existente: atualiza senha_hash para espelhar o ambiente a cada deploy.
+    - Se senha_hash existente estiver corrompida e ADMIN_MASTER_PASSWORD estiver definida,
+      grava novo hash bcrypt como texto UTF-8 (adequado ao Postgres).
     """
     raw_email = (os.environ.get("ADMIN_MASTER_EMAIL") or "").strip()
     if not raw_email:
@@ -436,12 +465,40 @@ def _bootstrap_admin_master():
     )
     row = cursor.fetchone()
 
+    usuario_id = int(row[0]) if row else None
+
+    hash_ok = True
+    if usuario_id is not None:
+        cursor.execute(
+            "SELECT senha_hash FROM usuarios WHERE id = ?",
+            (usuario_id,),
+        )
+        hrow = cursor.fetchone()
+        raw_hash = hrow[0] if hrow else None
+        senha_hash_str = _normalizar_senha_hash_db(raw_hash)
+        hash_ok = _senha_hash_bcrypt_valida(senha_hash_str)
+
+    if usuario_id is not None and not hash_ok and not pwd_sync:
+        print(
+            "[bootstrap_admin_master] AVISO: senha_hash do admin master parece invalida; "
+            "defina ADMIN_MASTER_PASSWORD (>=8 caracteres) para reparar no proximo deploy.",
+            flush=True,
+        )
+
     if pwd_sync:
-        senha_hash = bcrypt.hashpw(pwd_sync.encode(), bcrypt.gensalt())
+        senha_hash_txt = bcrypt.hashpw(
+            pwd_sync.encode("utf-8"), bcrypt.gensalt()
+        ).decode("utf-8")
         if row:
+            if not hash_ok:
+                print(
+                    "[bootstrap_admin_master] senha_hash do admin master reparada "
+                    "(valor anterior invalido ou ausente).",
+                    flush=True,
+                )
             cursor.execute(
                 "UPDATE usuarios SET senha_hash = ? WHERE id = ?",
-                (senha_hash, int(row[0])),
+                (senha_hash_txt, usuario_id),
             )
         else:
             conn.commit()
