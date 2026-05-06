@@ -3,7 +3,8 @@ from ui.empty_states import render_empty_state_sem_empresa
 
 
 def render_empresas_sidebar(empresas):
-    st.sidebar.markdown("## 🏢 Empresas")
+    st.sidebar.markdown("### Empresa")
+    st.sidebar.caption("Organização ativa (sessão)")
 
     if not empresas:
         render_empty_state_sem_empresa()

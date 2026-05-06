@@ -529,6 +529,7 @@ render_header()
 if st.sidebar.button("🚪 Sair"):
     processar_logout()
 
+st.sidebar.divider()
 
 # =========================
 # EMPRESAS
@@ -551,12 +552,13 @@ render_resumo_permissoes(perfil_usuario)
 
 st.session_state.setdefault("pagina_ativa", "Consultoria")
 nav_opts = ["Consultoria", "Gestão de Equipe", "Integrações", "Dashboard Corporativo"]
-icons_nav = ["chat-dots-fill", "people-fill", "plug-fill", "bar-chart-line-fill"]
+# Bootstrap Icons (sem prefixo bi-) — alinhados ao streamlit-option-menu
+icons_nav = ["kanban", "people", "plug", "view-stacked"]
 if st.session_state.get("pagina_ativa") not in nav_opts + ["SuperAdminPanel"]:
     st.session_state["pagina_ativa"] = "Consultoria"
 is_super_admin = usuario_eh_admin(usuario_id)
 
-st.sidebar.markdown("---")
+st.sidebar.divider()
 with st.sidebar:
     if st.session_state.get("pagina_ativa") == "SuperAdminPanel":
         st.info("Modo Super Admin ativo")
@@ -564,36 +566,58 @@ with st.sidebar:
             st.session_state["pagina_ativa"] = "Consultoria"
             st.rerun()
     else:
+        st.markdown("### Navegação")
+        st.caption("Consultoria, equipe, integrações e painéis.")
+        st.divider()
         area_principal = option_menu(
-            menu_title="Navegação",
+            menu_title=None,
             options=nav_opts,
             icons=icons_nav,
-            menu_icon="compass-fill",
+            menu_icon="layers",
             default_index=nav_opts.index(st.session_state["pagina_ativa"]),
             key="menu_navegacao_mp",
             styles={
-                "container": {"padding": "0!important", "background-color": "#111827"},
-                "icon": {"color": "#6366f1", "font-size": "18px"},
-                "menu-title": {"font-size": "1rem", "font-weight": "700", "color": "#e2e8f0"},
-                "nav-link": {
-                    "font-size": "15px",
-                    "text-align": "left",
-                    "margin": "0px",
-                    "--hover-color": "#1f2937",
+                "container": {
+                    "padding": "0.15rem 0 0.35rem 0!important",
+                    "background-color": "transparent",
                 },
-                "nav-link-selected": {"background-color": "#6366f1"},
+                "icon": {
+                    "color": "#60a5fa",
+                    "font-size": "1.08rem",
+                    "opacity": "0.95",
+                },
+                "nav-link": {
+                    "font-size": "0.94rem",
+                    "text-align": "left",
+                    "margin": "0.12rem 0",
+                    "padding": "0.5rem 0.65rem",
+                    "border-radius": "10px",
+                    "color": "#cbd5e1",
+                    "--hover-color": "rgba(30, 41, 59, 0.85)",
+                },
+                "nav-link-selected": {
+                    "background-color": "rgba(37, 99, 235, 0.28)",
+                    "color": "#fffbeb",
+                    "font-weight": "600",
+                    "border-left": "3px solid #fbbf24",
+                    "padding-left": "0.55rem",
+                    "box-shadow": "inset 0 0 0 1px rgba(251, 191, 36, 0.12)",
+                },
             },
         )
         st.session_state["pagina_ativa"] = area_principal
 
     if is_super_admin:
-        st.markdown("---")
-        st.subheader("Super Admin")
-        if st.button("Painel de Controle Global", key="btn_superadmin_panel"):
+        st.divider()
+        st.markdown("### Super Admin")
+        st.caption("Operações globais e auditoria.")
+        if st.button("Painel de Controle Global", key="btn_superadmin_panel", icon="🛡️"):
             st.session_state["pagina_ativa"] = "SuperAdminPanel"
             st.rerun()
 
 area_principal = st.session_state.get("pagina_ativa", "Consultoria")
+
+st.sidebar.divider()
 
 alertas_prazo = verificar_prazos_pendentes(usuario_id, perfil_usuario)
 if alertas_prazo:
