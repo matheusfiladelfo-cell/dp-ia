@@ -1,0 +1,35 @@
+/* Remove espaçamento superior excessivo e preserva área útil */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 80px !important;
+}
+
+/* Fundo global alinhado ao tema escuro */
+html, body, .stApp {
+    background-color: #0b1120;
+}
+
+/* Evita blocos brancos em wrappers principais */
+section.main > div {
+    background-color: transparent !important;
+}
+
+/* Melhora visual dos botões padrão */
+.stButton > button {
+    border-radius: 8px;
+    font-weight: 700;
+    transition: all 0.2s ease-in-out;
+}
+
+.stButton > button:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
+}
+
+/* Organização visual da área de upload e blocos próximos */
+div[data-testid="stFileUploader"] + div[data-testid="stHorizontalBlock"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+

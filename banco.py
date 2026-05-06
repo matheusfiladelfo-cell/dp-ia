@@ -1,10 +1,16 @@
 import csv
+import hashlib
+import json
 import os
+import re
+import secrets
 import sqlite3
 import time
-from datetime import datetime
-import json
+import uuid
+from datetime import datetime, timedelta
+
 import bcrypt
+from sqlalchemy import create_engine
 
 LEADS_CSV_FALLBACK = "leads.csv"
 
@@ -24,6 +30,167 @@ DB_NAME = "dpia.db"
 _LOGIN_MAX_FAILED = 5
 _LOGIN_WINDOW_SECONDS = 10 * 60
 _LOGIN_BLOCK_SECONDS = 3 * 60
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+
+
+def _normalize_database_url(database_url: str) -> str:
+    """
+    Render costuma fornecer DATABASE_URL começando com postgres://.
+    SQLAlchemy exige driver explícito quando queremos psycopg2.
+    """
+    if database_url.startswith("postgres://"):
+        return "postgresql+psycopg2://" + database_url[len("postgres://"):]
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + database_url[len("postgresql://"):]
+    return database_url
+
+
+def _build_engine():
+    normalized_url = _normalize_database_url(DATABASE_URL)
+    if normalized_url:
+        return create_engine(normalized_url, pool_pre_ping=True, future=True)
+    return create_engine(
+        f"sqlite:///{DB_NAME}",
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
+
+
+ENGINE = _build_engine()
+IS_POSTGRES = ENGINE.dialect.name == "postgresql"
+
+
+def _replace_qmark_placeholders(sql: str) -> str:
+    """Converte placeholders `?` para `%s` (psycopg2), respeitando strings SQL."""
+    out = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+        elif ch == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _sqlite_autoincrement_to_postgres(sql: str) -> str:
+    return re.sub(
+        r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT",
+        "BIGSERIAL PRIMARY KEY",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+
+def _sqlite_insert_or_replace_to_postgres(sql: str) -> str:
+    """
+    Tradução compatível para padrão legado:
+    INSERT OR REPLACE INTO tabela (c1, c2, ...) VALUES (...)
+    -> INSERT ... ON CONFLICT (c1) DO UPDATE SET ...
+    """
+    pattern = re.compile(
+        r"^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*"
+        r"\((.*?)\)\s*VALUES\s*\((.*?)\)\s*;?\s*$",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.match(sql)
+    if not match:
+        return sql
+    table_name = match.group(1).strip()
+    raw_columns = match.group(2).strip()
+    raw_values = match.group(3).strip()
+    columns = [c.strip() for c in raw_columns.split(",") if c.strip()]
+    if not columns:
+        return sql
+    conflict_col = columns[0]
+    update_columns = [c for c in columns if c != conflict_col]
+    if not update_columns:
+        return (
+            f"INSERT INTO {table_name} ({raw_columns}) VALUES ({raw_values}) "
+            f"ON CONFLICT ({conflict_col}) DO NOTHING"
+        )
+    set_clause = ", ".join(f"{col} = EXCLUDED.{col}" for col in update_columns)
+    return (
+        f"INSERT INTO {table_name} ({raw_columns}) VALUES ({raw_values}) "
+        f"ON CONFLICT ({conflict_col}) DO UPDATE SET {set_clause}"
+    )
+
+
+def _adapt_sql_for_postgres(sql: str) -> str:
+    sql = _sqlite_insert_or_replace_to_postgres(sql)
+    sql = _sqlite_autoincrement_to_postgres(sql)
+    sql = _replace_qmark_placeholders(sql)
+    return sql
+
+
+class _CompatCursor:
+    def __init__(self, cursor, owner_connection):
+        self._cursor = cursor
+        self._owner_connection = owner_connection
+        self.lastrowid = None
+
+    def execute(self, sql, params=None):
+        try:
+            adapted_sql = _adapt_sql_for_postgres(sql) if IS_POSTGRES else sql
+            if params is None:
+                result = self._cursor.execute(adapted_sql)
+            else:
+                result = self._cursor.execute(adapted_sql, params)
+            if IS_POSTGRES and adapted_sql.strip().upper().startswith("INSERT INTO"):
+                self._refresh_lastrowid()
+            return result
+        except Exception as exc:
+            # Mantém compatibilidade com os vários `except sqlite3.OperationalError` no arquivo.
+            raise sqlite3.OperationalError(str(exc)) from exc
+
+    def _refresh_lastrowid(self):
+        try:
+            probe = self._owner_connection._raw_connection.cursor()
+            probe.execute("SELECT LASTVAL()")
+            row = probe.fetchone()
+            probe.close()
+            self.lastrowid = row[0] if row else None
+        except Exception:
+            self.lastrowid = None
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def close(self):
+        return self._cursor.close()
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+
+class _CompatConnection:
+    def __init__(self, raw_connection):
+        self._raw_connection = raw_connection
+
+    def cursor(self):
+        return _CompatCursor(self._raw_connection.cursor(), self)
+
+    def commit(self):
+        return self._raw_connection.commit()
+
+    def rollback(self):
+        return self._raw_connection.rollback()
+
+    def close(self):
+        return self._raw_connection.close()
 
 
 def _admin_master_email() -> str | None:
@@ -161,7 +328,10 @@ def resetar_falhas_login(email: str | None, ip: str | None = None) -> None:
 # CONEXÃO CENTRALIZADA
 # =========================
 def conectar():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+    raw_connection = ENGINE.raw_connection()
+    if IS_POSTGRES:
+        return _CompatConnection(raw_connection)
+    return raw_connection
 
 
 def _garantir_coluna_usuarios_bloqueado():
@@ -217,6 +387,71 @@ def _bootstrap_admin_master():
     )
     conn.commit()
     conn.close()
+
+
+def _garantir_coluna_usuarios_nome():
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN nome TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
+def _garantir_coluna_analises_criado_por():
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "ALTER TABLE analises ADD COLUMN criado_por_usuario_id INTEGER"
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
+def _migrar_equipe_permissoes_padrao():
+    """Backfill: cada empresa existente ganha o proprietário como admin na tabela empresa_membros."""
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        """
+        SELECT id, usuario_id FROM empresas
+        WHERE usuario_id IS NOT NULL
+        """
+    )
+    for empresa_id, proprietario_id in cursor.fetchall():
+        cursor.execute(
+            """
+            INSERT INTO empresa_membros (usuario_id, empresa_id, perfil, criado_em)
+            VALUES (?, ?, 'admin', ?)
+            ON CONFLICT(usuario_id, empresa_id) DO NOTHING
+            """,
+            (int(proprietario_id), int(empresa_id), agora),
+        )
+    cursor.execute(
+        """
+        UPDATE analises SET criado_por_usuario_id = (
+            SELECT usuario_id FROM empresas WHERE empresas.id = analises.empresa_id
+        )
+        WHERE criado_por_usuario_id IS NULL
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+PERFIS_EQUIPE_VALIDOS = frozenset({"admin", "gestor", "colaborador"})
+STATUS_CONVITE_VALIDOS = frozenset({"pendente", "aceito", "expirado", "cancelado"})
+
+# Registro técnico em `analises` para amarrar fatos validados antes do relatório completo (excluir de insights/resumos).
+TIPO_ANALISE_STUB_VALIDACAO_FATOS = "validacao_fatos_documento"
 
 
 # =========================
@@ -368,12 +603,248 @@ def criar_tabelas():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS historico_status_usuario (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        status_anterior TEXT,
+        status_novo TEXT NOT NULL,
+        alterado_em TEXT NOT NULL,
+        alterado_por TEXT NOT NULL,
+        motivo TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS historico_planos_assinatura (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        assinatura_id INTEGER,
+        usuario_id INTEGER NOT NULL,
+        plano_anterior TEXT,
+        plano_novo TEXT NOT NULL,
+        status_anterior TEXT,
+        status_novo TEXT NOT NULL,
+        alterado_em TEXT NOT NULL,
+        alterado_por TEXT NOT NULL
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS eventos_produto (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER,
+        empresa_id INTEGER,
+        nome_evento TEXT NOT NULL,
+        timestamp_evento TEXT NOT NULL,
+        metadados_json TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS empresa_membros (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        empresa_id INTEGER NOT NULL,
+        perfil TEXT NOT NULL,
+        criado_em TEXT,
+        UNIQUE(usuario_id, empresa_id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS analises_fatos_validados (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        analise_id INTEGER NOT NULL,
+        nome_fato TEXT NOT NULL,
+        valor_fato TEXT,
+        fonte TEXT NOT NULL,
+        validado_em TEXT NOT NULL,
+        validado_por_usuario_id INTEGER NOT NULL,
+        UNIQUE(analise_id, nome_fato)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS empresa_api_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        api_key_hash TEXT NOT NULL UNIQUE,
+        criada_em TEXT NOT NULL,
+        revogada_em TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS empresa_funcionarios_integracao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        employee_id_externo TEXT NOT NULL,
+        nome_completo TEXT NOT NULL,
+        data_admissao TEXT,
+        cargo TEXT,
+        salario_bruto REAL,
+        tipo_contrato TEXT,
+        ultima_atualizacao TEXT NOT NULL,
+        UNIQUE(empresa_id, employee_id_externo)
+    )
+    """)
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_empresa_api_keys_empresa ON empresa_api_keys(empresa_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_empresa_func_int_empresa ON empresa_funcionarios_integracao(empresa_id)"
+    )
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS empresa_auditorias_risco (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        executada_em TEXT NOT NULL,
+        executada_por_usuario_id INTEGER NOT NULL,
+        resultado_json TEXT NOT NULL
+    )
+    """)
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_auditorias_risco_empresa ON empresa_auditorias_risco(empresa_id)"
+    )
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS empresa_convites_primeiro_acesso (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        usuario_id INTEGER NOT NULL,
+        email TEXT NOT NULL,
+        nome_convidado TEXT,
+        perfil TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pendente',
+        convidado_por_usuario_id INTEGER NOT NULL,
+        criado_em TEXT NOT NULL,
+        expira_em TEXT NOT NULL,
+        aceito_em TEXT
+    )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_convites_empresa_status ON empresa_convites_primeiro_acesso(empresa_id, status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_convites_email_status ON empresa_convites_primeiro_acesso(email, status)"
+    )
+
     conn.commit()
     conn.close()
     _garantir_coluna_usuarios_bloqueado()
     _garantir_coluna_usuarios_is_admin()
+    _garantir_coluna_usuarios_nome()
+    _garantir_coluna_analises_criado_por()
     _garantir_colunas_leads_crm()
     _bootstrap_admin_master()
+    _migrar_equipe_permissoes_padrao()
+
+
+def criar_tabelas_e_migrar():
+    """
+    Ponto de entrada de bootstrap para ambientes de deploy.
+    Mantém compatibilidade com scripts de inicialização (Render/start.sh).
+    """
+    criar_tabelas()
+
+
+def registrar_mudanca_status_usuario(
+    usuario_id,
+    status_anterior: str | None,
+    status_novo: str,
+    alterado_por: str = "sistema",
+    motivo: str | None = None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO historico_status_usuario (
+            usuario_id, status_anterior, status_novo, alterado_em, alterado_por, motivo
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(usuario_id),
+            str(status_anterior or "").strip() or None,
+            str(status_novo or "").strip() or "ativo",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(alterado_por or "sistema").strip() or "sistema",
+            str(motivo).strip() if motivo is not None else None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def registrar_mudanca_plano_assinatura(
+    assinatura_id,
+    usuario_id,
+    plano_anterior: str | None,
+    plano_novo: str,
+    status_anterior: str | None,
+    status_novo: str,
+    alterado_por: str = "sistema",
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO historico_planos_assinatura (
+            assinatura_id,
+            usuario_id,
+            plano_anterior,
+            plano_novo,
+            status_anterior,
+            status_novo,
+            alterado_em,
+            alterado_por
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(assinatura_id) if assinatura_id is not None else None,
+            int(usuario_id),
+            str(plano_anterior or "").strip() or None,
+            str(plano_novo or "").strip() or "FREE",
+            str(status_anterior or "").strip() or None,
+            str(status_novo or "").strip() or "active",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(alterado_por or "sistema").strip() or "sistema",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def registrar_evento_produto(
+    nome_evento: str,
+    usuario_id=None,
+    empresa_id=None,
+    metadados: dict | None = None,
+):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO eventos_produto (
+            usuario_id, empresa_id, nome_evento, timestamp_evento, metadados_json
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            int(usuario_id) if usuario_id is not None else None,
+            int(empresa_id) if empresa_id is not None else None,
+            str(nome_evento or "").strip() or "evento_produto",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            json.dumps(metadados or {}, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _garantir_colunas_leads_crm():
@@ -468,16 +939,17 @@ def salvar_lead_demonstracao(nome, empresa, whatsapp, email, plano_interesse):
 # =========================
 # 🔐 USUÁRIOS
 # =========================
-def criar_usuario(email, senha):
+def criar_usuario(email, senha, nome=None):
     conn = conectar()
     cursor = conn.cursor()
 
     senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+    nome_val = (nome or "").strip() or None
 
     cursor.execute("""
-    INSERT INTO usuarios (email, senha_hash)
-    VALUES (?, ?)
-    """, (email, senha_hash))
+    INSERT INTO usuarios (email, senha_hash, nome)
+    VALUES (?, ?, ?)
+    """, (email, senha_hash, nome_val))
 
     usuario_id = cursor.lastrowid
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -505,6 +977,50 @@ def criar_usuario(email, senha):
     VALUES (?, 1, 0, ?, ?)
     """, (usuario_id, agora, agora))
 
+    conn.commit()
+    conn.close()
+    return usuario_id
+
+
+def obter_usuario_id_por_email(email: str):
+    if not email or not str(email).strip():
+        return None
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id FROM usuarios WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))",
+        (email.strip(),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row else None
+
+
+def atualizar_nome_usuario(usuario_id, nome: str):
+    nome = (nome or "").strip()
+    if not nome:
+        return
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE usuarios SET nome = ? WHERE id = ?",
+        (nome, int(usuario_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def atualizar_senha_usuario(usuario_id, nova_senha: str):
+    senha = str(nova_senha or "")
+    if len(senha) < 8:
+        raise ValueError("A senha deve ter pelo menos 8 caracteres.")
+    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE usuarios SET senha_hash = ? WHERE id = ?",
+        (senha_hash, int(usuario_id)),
+    )
     conn.commit()
     conn.close()
 
@@ -688,23 +1204,563 @@ def cadastrar_empresa(usuario_id, nome, cnpj, cidade, estado):
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ))
 
+    empresa_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    return int(empresa_id)
 
 
 def listar_empresas(usuario_id):
     conn = conectar()
     cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT id, nome FROM empresas
-    WHERE usuario_id = ?
-    ORDER BY nome ASC
-    """, (usuario_id,))
+    cursor.execute(
+        """
+        SELECT DISTINCT e.id, e.nome
+        FROM empresas e
+        INNER JOIN empresa_membros m ON m.empresa_id = e.id AND m.usuario_id = ?
+        ORDER BY e.nome ASC
+        """,
+        (usuario_id,),
+    )
 
     dados = cursor.fetchall()
     conn.close()
     return dados
+
+
+def listar_todas_as_empresas() -> list[dict]:
+    """
+    Catálogo global de empresas para Super Admin.
+    Retorna id, nome, cnpj, data de criação e e-mail do proprietário original.
+    """
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            e.id,
+            COALESCE(e.usuario_id, 0) AS id_proprietario,
+            COALESCE(e.nome, '') AS nome_empresa,
+            COALESCE(e.cnpj, '') AS cnpj,
+            COALESCE(e.data_cadastro, '') AS data_criacao_empresa,
+            COALESCE(u.email, '') AS email_proprietario,
+            UPPER(COALESCE(a.plano, 'FREE')) AS plano_atual
+        FROM empresas e
+        LEFT JOIN usuarios u ON u.id = e.usuario_id
+        LEFT JOIN assinaturas a ON a.usuario_id = e.usuario_id
+        ORDER BY e.id DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id_empresa": int(r[0]),
+            "id_proprietario": int(r[1] or 0),
+            "nome_empresa": str(r[2] or ""),
+            "cnpj": str(r[3] or ""),
+            "data_criacao_empresa": str(r[4] or ""),
+            "email_proprietario": str(r[5] or ""),
+            "plano_atual": str(r[6] or "FREE").upper(),
+        }
+        for r in rows
+    ]
+
+
+def listar_historico_status_usuario(limit=100) -> list[dict]:
+    conn = conectar()
+    cursor = conn.cursor()
+    lim = max(1, int(limit or 100))
+    cursor.execute(
+        """
+        SELECT
+            h.id,
+            h.usuario_id,
+            COALESCE(u.email, '') AS email_usuario,
+            COALESCE(h.status_anterior, '') AS status_anterior,
+            COALESCE(h.status_novo, '') AS status_novo,
+            COALESCE(h.alterado_em, '') AS alterado_em,
+            COALESCE(h.alterado_por, '') AS alterado_por,
+            COALESCE(h.motivo, '') AS motivo
+        FROM historico_status_usuario h
+        LEFT JOIN usuarios u ON u.id = h.usuario_id
+        ORDER BY datetime(h.alterado_em) DESC, h.id DESC
+        LIMIT ?
+        """,
+        (lim,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": int(r[0]),
+            "usuario_id": int(r[1] or 0),
+            "email_usuario": str(r[2] or ""),
+            "status_anterior": str(r[3] or ""),
+            "status_novo": str(r[4] or ""),
+            "alterado_em": str(r[5] or ""),
+            "alterado_por": str(r[6] or ""),
+            "motivo": str(r[7] or ""),
+        }
+        for r in rows
+    ]
+
+
+def listar_historico_planos_assinatura(limit=100) -> list[dict]:
+    conn = conectar()
+    cursor = conn.cursor()
+    lim = max(1, int(limit or 100))
+    cursor.execute(
+        """
+        SELECT
+            h.id,
+            h.assinatura_id,
+            h.usuario_id,
+            COALESCE(u.email, '') AS email_usuario,
+            COALESCE(h.plano_anterior, '') AS plano_anterior,
+            COALESCE(h.plano_novo, '') AS plano_novo,
+            COALESCE(h.status_anterior, '') AS status_anterior,
+            COALESCE(h.status_novo, '') AS status_novo,
+            COALESCE(h.alterado_em, '') AS alterado_em,
+            COALESCE(h.alterado_por, '') AS alterado_por
+        FROM historico_planos_assinatura h
+        LEFT JOIN usuarios u ON u.id = h.usuario_id
+        ORDER BY datetime(h.alterado_em) DESC, h.id DESC
+        LIMIT ?
+        """,
+        (lim,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": int(r[0]),
+            "assinatura_id": int(r[1] or 0) if r[1] is not None else None,
+            "usuario_id": int(r[2] or 0),
+            "email_usuario": str(r[3] or ""),
+            "plano_anterior": str(r[4] or ""),
+            "plano_novo": str(r[5] or ""),
+            "status_anterior": str(r[6] or ""),
+            "status_novo": str(r[7] or ""),
+            "alterado_em": str(r[8] or ""),
+            "alterado_por": str(r[9] or ""),
+        }
+        for r in rows
+    ]
+
+
+def listar_eventos_produto(limit=100) -> list[dict]:
+    conn = conectar()
+    cursor = conn.cursor()
+    lim = max(1, int(limit or 100))
+    cursor.execute(
+        """
+        SELECT
+            e.id,
+            e.usuario_id,
+            COALESCE(u.email, '') AS email_usuario,
+            e.empresa_id,
+            COALESCE(emp.nome, '') AS nome_empresa,
+            COALESCE(e.nome_evento, '') AS nome_evento,
+            COALESCE(e.timestamp_evento, '') AS timestamp_evento,
+            COALESCE(e.metadados_json, '{}') AS metadados_json
+        FROM eventos_produto e
+        LEFT JOIN usuarios u ON u.id = e.usuario_id
+        LEFT JOIN empresas emp ON emp.id = e.empresa_id
+        ORDER BY datetime(e.timestamp_evento) DESC, e.id DESC
+        LIMIT ?
+        """,
+        (lim,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": int(r[0]),
+            "usuario_id": int(r[1] or 0) if r[1] is not None else None,
+            "email_usuario": str(r[2] or ""),
+            "empresa_id": int(r[3] or 0) if r[3] is not None else None,
+            "nome_empresa": str(r[4] or ""),
+            "nome_evento": str(r[5] or ""),
+            "timestamp_evento": str(r[6] or ""),
+            "metadados_json": str(r[7] or "{}"),
+        }
+        for r in rows
+    ]
+
+
+def obter_perfil_na_empresa(usuario_id, empresa_id) -> str | None:
+    """Retorna perfil ('admin'|'gestor'|'colaborador') ou None se não houver vínculo."""
+    if usuario_id is None or empresa_id is None:
+        return None
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT perfil FROM empresa_membros
+        WHERE usuario_id = ? AND empresa_id = ?
+        """,
+        (int(usuario_id), int(empresa_id)),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    perfil = str(row[0] or "").strip().lower()
+    return perfil if perfil in PERFIS_EQUIPE_VALIDOS else None
+
+
+def listar_membros_empresa(empresa_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT u.id,
+               COALESCE(NULLIF(TRIM(u.nome), ''), u.email) AS nome_exibicao,
+               u.email,
+               m.perfil,
+               c.status,
+               c.expira_em
+        FROM empresa_membros m
+        JOIN usuarios u ON u.id = m.usuario_id
+        LEFT JOIN empresa_convites_primeiro_acesso c
+          ON c.id = (
+              SELECT c2.id
+              FROM empresa_convites_primeiro_acesso c2
+              WHERE c2.empresa_id = m.empresa_id
+                AND c2.usuario_id = m.usuario_id
+              ORDER BY c2.id DESC
+              LIMIT 1
+          )
+        WHERE m.empresa_id = ?
+        ORDER BY nome_exibicao COLLATE NOCASE ASC
+        """,
+        (int(empresa_id),),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    out = []
+    agora = datetime.now()
+    for r in rows:
+        status_raw = str(r[4] or "").strip().lower()
+        expira_raw = str(r[5] or "").strip()
+        if status_raw == "pendente" and expira_raw:
+            try:
+                if datetime.strptime(expira_raw, "%Y-%m-%d %H:%M:%S") < agora:
+                    status_raw = "expirado"
+            except Exception:
+                pass
+        if status_raw == "pendente":
+            status_visual = "🟡 Pendente"
+        elif status_raw == "expirado":
+            status_visual = "⚫ Expirado"
+        else:
+            status_visual = "🟢 Aceito"
+            status_raw = "aceito"
+        out.append(
+            {
+                "usuario_id": int(r[0]),
+                "nome": r[1],
+                "email": r[2],
+                "perfil": str(r[3] or "").lower(),
+                "status_convite": status_visual,
+                "status_convite_raw": status_raw,
+            }
+        )
+    return out
+
+
+def contar_admins_empresa(empresa_id) -> int:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM empresa_membros
+        WHERE empresa_id = ? AND LOWER(TRIM(perfil)) = 'admin'
+        """,
+        (int(empresa_id),),
+    )
+    n = int(cursor.fetchone()[0] or 0)
+    conn.close()
+    return n
+
+
+def adicionar_ou_atualizar_membro_empresa(empresa_id, usuario_id_alvo, perfil: str):
+    perfil = str(perfil or "").strip().lower()
+    if perfil not in PERFIS_EQUIPE_VALIDOS:
+        raise ValueError("Perfil inválido.")
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        """
+        INSERT INTO empresa_membros (usuario_id, empresa_id, perfil, criado_em)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(usuario_id, empresa_id) DO UPDATE SET
+            perfil = excluded.perfil
+        """,
+        (int(usuario_id_alvo), int(empresa_id), perfil, agora),
+    )
+    conn.commit()
+    conn.close()
+
+
+def atualizar_perfil_membro_empresa(empresa_id, usuario_id_alvo, novo_perfil: str):
+    novo_perfil = str(novo_perfil or "").strip().lower()
+    if novo_perfil not in PERFIS_EQUIPE_VALIDOS:
+        raise ValueError("Perfil inválido.")
+    atual = obter_perfil_na_empresa(usuario_id_alvo, empresa_id)
+    if not atual:
+        raise ValueError("Usuário não pertence a esta empresa.")
+    if atual == "admin" and novo_perfil != "admin":
+        if contar_admins_empresa(empresa_id) <= 1:
+            raise ValueError("Não é possível remover o único administrador da empresa.")
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE empresa_membros SET perfil = ?
+        WHERE empresa_id = ? AND usuario_id = ?
+        """,
+        (novo_perfil, int(empresa_id), int(usuario_id_alvo)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remover_membro_empresa(empresa_id, usuario_id_alvo):
+    perfil = obter_perfil_na_empresa(usuario_id_alvo, empresa_id)
+    if not perfil:
+        return
+    if perfil == "admin" and contar_admins_empresa(empresa_id) <= 1:
+        raise ValueError("Não é possível remover o único administrador da empresa.")
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM empresa_membros
+        WHERE empresa_id = ? AND usuario_id = ?
+        """,
+        (int(empresa_id), int(usuario_id_alvo)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _hash_token_convite_primeiro_acesso(token_plain: str) -> str:
+    return hashlib.sha256(str(token_plain).encode("utf-8")).hexdigest()
+
+
+def criar_ou_reenviar_convite_primeiro_acesso(
+    empresa_id,
+    nome_convite: str,
+    email_convite: str,
+    perfil: str,
+    convidado_por_usuario_id,
+    validade_horas=48,
+) -> tuple[bool, str, str | None]:
+    """
+    Cria/renova convite com token de primeiro acesso. Nunca retorna senha.
+    Retorna (ok, mensagem, token_plain_uso_unico ou None).
+    """
+    email_convite = (email_convite or "").strip().lower()
+    nome_convite = (nome_convite or "").strip()
+    perfil = str(perfil or "").strip().lower()
+    if not email_convite:
+        return False, "Informe um e-mail válido.", None
+    if perfil not in PERFIS_EQUIPE_VALIDOS:
+        return False, "Perfil inválido.", None
+
+    uid_existente = obter_usuario_id_por_email(email_convite)
+    try:
+        if uid_existente:
+            uid = uid_existente
+            if nome_convite:
+                atualizar_nome_usuario(uid, nome_convite)
+        else:
+            senha_placeholder = secrets.token_urlsafe(24)
+            uid = criar_usuario(email_convite, senha_placeholder, nome=nome_convite or None)
+
+        if obter_perfil_na_empresa(uid, empresa_id):
+            return False, "Este usuário já pertence à empresa.", None
+
+        token_plain = str(uuid.uuid4())
+        token_hash = _hash_token_convite_primeiro_acesso(token_plain)
+        agora_dt = datetime.now()
+        expira_dt = agora_dt + timedelta(hours=max(1, int(validade_horas or 48)))
+        agora = agora_dt.strftime("%Y-%m-%d %H:%M:%S")
+        expira = expira_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE empresa_convites_primeiro_acesso
+            SET status = 'expirado'
+            WHERE empresa_id = ? AND usuario_id = ? AND status = 'pendente'
+            """,
+            (int(empresa_id), int(uid)),
+        )
+        cursor.execute(
+            """
+            INSERT INTO empresa_convites_primeiro_acesso (
+                empresa_id, usuario_id, email, nome_convidado, perfil,
+                token_hash, status, convidado_por_usuario_id, criado_em, expira_em
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'pendente', ?, ?, ?)
+            """,
+            (
+                int(empresa_id),
+                int(uid),
+                email_convite,
+                nome_convite or None,
+                perfil,
+                token_hash,
+                int(convidado_por_usuario_id),
+                agora,
+                expira,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return True, "Convite criado com sucesso.", token_plain
+    except Exception as exc:
+        return False, str(exc), None
+
+
+def convidar_usuario_para_empresa(
+    empresa_id,
+    nome_convite: str,
+    email_convite: str,
+    perfil: str,
+    convidado_por_usuario_id=None,
+) -> tuple[bool, str, str | None]:
+    """
+    Compatibilidade: agora opera via convite seguro com token de primeiro acesso.
+    """
+    return criar_ou_reenviar_convite_primeiro_acesso(
+        empresa_id=empresa_id,
+        nome_convite=nome_convite,
+        email_convite=email_convite,
+        perfil=perfil,
+        convidado_por_usuario_id=convidado_por_usuario_id or 0,
+    )
+
+
+def listar_convites_primeiro_acesso_empresa(empresa_id) -> list[dict]:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT c.id, c.email, c.nome_convidado, c.perfil, c.status, c.criado_em, c.expira_em, c.aceito_em
+        FROM empresa_convites_primeiro_acesso c
+        WHERE c.empresa_id = ?
+        ORDER BY datetime(c.criado_em) DESC, c.id DESC
+        """,
+        (int(empresa_id),),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    out = []
+    agora = datetime.now()
+    for row in rows:
+        status = str(row[4] or "pendente")
+        if status == "pendente":
+            try:
+                if datetime.strptime(str(row[6]), "%Y-%m-%d %H:%M:%S") < agora:
+                    status = "expirado"
+            except Exception:
+                pass
+        out.append(
+            {
+                "convite_id": int(row[0]),
+                "email": str(row[1] or ""),
+                "nome": str(row[2] or ""),
+                "perfil": str(row[3] or ""),
+                "status": status,
+                "criado_em": str(row[5] or ""),
+                "expira_em": str(row[6] or ""),
+                "aceito_em": str(row[7] or ""),
+            }
+        )
+    return out
+
+
+def validar_token_convite_primeiro_acesso(token_plain: str) -> dict | None:
+    if not token_plain or not str(token_plain).strip():
+        return None
+    token_hash = _hash_token_convite_primeiro_acesso(token_plain.strip())
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT c.id, c.empresa_id, c.usuario_id, c.email, c.nome_convidado, c.perfil, c.status, c.expira_em
+        FROM empresa_convites_primeiro_acesso c
+        WHERE c.token_hash = ?
+        ORDER BY c.id DESC
+        LIMIT 1
+        """,
+        (token_hash,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    status = str(row[6] or "").strip().lower()
+    if status != "pendente":
+        return None
+    try:
+        expira = datetime.strptime(str(row[7]), "%Y-%m-%d %H:%M:%S")
+        if expira < datetime.now():
+            conn = conectar()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE empresa_convites_primeiro_acesso SET status = 'expirado' WHERE id = ?",
+                (int(row[0]),),
+            )
+            conn.commit()
+            conn.close()
+            return None
+    except Exception:
+        return None
+    return {
+        "convite_id": int(row[0]),
+        "empresa_id": int(row[1]),
+        "usuario_id": int(row[2]),
+        "email": str(row[3] or ""),
+        "nome_convidado": str(row[4] or ""),
+        "perfil": str(row[5] or ""),
+    }
+
+
+def concluir_convite_primeiro_acesso(token_plain: str, nova_senha: str) -> tuple[bool, str]:
+    convite = validar_token_convite_primeiro_acesso(token_plain)
+    if not convite:
+        return False, "Este link de convite é inválido ou expirou."
+    usuario_id = int(convite["usuario_id"])
+    empresa_id = int(convite["empresa_id"])
+    perfil = str(convite["perfil"] or "").strip().lower()
+    if perfil not in PERFIS_EQUIPE_VALIDOS:
+        return False, "Perfil do convite inválido."
+    try:
+        atualizar_senha_usuario(usuario_id, nova_senha)
+        adicionar_ou_atualizar_membro_empresa(empresa_id, usuario_id, perfil)
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE empresa_convites_primeiro_acesso
+            SET status = 'aceito', aceito_em = ?
+            WHERE id = ?
+            """,
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(convite["convite_id"])),
+        )
+        conn.commit()
+        conn.close()
+        return True, "Convite aceito com sucesso. Faça login para continuar."
+    except Exception as exc:
+        return False, str(exc)
 
 
 def contar_empresas_usuario(usuario_id):
@@ -746,20 +1802,40 @@ def garantir_plano_usuario(usuario_id, plano_default="FREE"):
     conn.close()
 
 
-def definir_plano_usuario(usuario_id, plano, status="active"):
+def definir_plano_usuario(usuario_id, plano, status="active", alterado_por="sistema"):
     conn = conectar()
     cursor = conn.cursor()
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     garantir_plano_usuario(usuario_id, plano_default=plano)
+    cursor.execute(
+        "SELECT id, plano, status FROM assinaturas WHERE usuario_id = ?",
+        (int(usuario_id),),
+    )
+    row_atual = cursor.fetchone()
+    assinatura_id = int(row_atual[0]) if row_atual else None
+    plano_anterior = str(row_atual[1] or "FREE") if row_atual else "FREE"
+    status_anterior = str(row_atual[2] or "active") if row_atual else "active"
+    plano_novo = str(plano or "FREE").upper()
+    status_novo = str(status or "active").lower()
 
     cursor.execute("""
     UPDATE assinaturas
     SET plano = ?, status = ?, updated_at = ?
     WHERE usuario_id = ?
-    """, (plano, status, agora, usuario_id))
+    """, (plano_novo, status_novo, agora, usuario_id))
 
     conn.commit()
     conn.close()
+    if (plano_anterior != plano_novo) or (status_anterior != status_novo):
+        registrar_mudanca_plano_assinatura(
+            assinatura_id=assinatura_id,
+            usuario_id=int(usuario_id),
+            plano_anterior=plano_anterior,
+            plano_novo=plano_novo,
+            status_anterior=status_anterior,
+            status_novo=status_novo,
+            alterado_por=str(alterado_por or "sistema"),
+        )
 
 
 def criar_checkout_transacao(
@@ -961,7 +2037,8 @@ def salvar_analise(
     dados,
     resultado,
     parecer,
-    versao_ia="v1"
+    versao_ia="v1",
+    criado_por_usuario_id=None,
 ):
     conn = conectar()
     cursor = conn.cursor()
@@ -976,9 +2053,10 @@ def salvar_analise(
         dados_json,
         resultado_json,
         parecer_json,
-        versao_ia
+        versao_ia,
+        criado_por_usuario_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         empresa_id,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -988,11 +2066,452 @@ def salvar_analise(
         json.dumps(dados),
         json.dumps(resultado),
         json.dumps(parecer),
-        versao_ia
+        versao_ia,
+        int(criado_por_usuario_id) if criado_por_usuario_id is not None else None,
     ))
 
+    aid = int(cursor.lastrowid)
     conn.commit()
     conn.close()
+    return aid
+
+
+def criar_analise_stub_validacao_fatos(empresa_id, usuario_id) -> int:
+    """Cria linha mínima em analises para FK de fatos validados (não entra em métricas de caso)."""
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        """
+        INSERT INTO analises (
+            empresa_id,
+            data_analise,
+            tipo_caso,
+            risco,
+            pontuacao,
+            dados_json,
+            resultado_json,
+            parecer_json,
+            versao_ia,
+            criado_por_usuario_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(empresa_id),
+            agora,
+            TIPO_ANALISE_STUB_VALIDACAO_FATOS,
+            "INCONCLUSIVO",
+            0,
+            json.dumps({"origem": "stub_validacao_fatos_documento"}),
+            json.dumps({}),
+            json.dumps({}),
+            "stub_fatos",
+            int(usuario_id),
+        ),
+    )
+    aid = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return aid
+
+
+def substituir_fatos_validados(analise_id, usuario_id, linhas: list[tuple[str, str, str]]):
+    """Substitui todas as linhas de fatos validados para uma análise."""
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    uid = int(usuario_id)
+    aid = int(analise_id)
+    cursor.execute(
+        "DELETE FROM analises_fatos_validados WHERE analise_id = ?",
+        (aid,),
+    )
+    for nome_fato, valor_fato, fonte in linhas:
+        cursor.execute(
+            """
+            INSERT INTO analises_fatos_validados (
+                analise_id, nome_fato, valor_fato, fonte, validado_em, validado_por_usuario_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (aid, str(nome_fato), str(valor_fato), str(fonte), agora, uid),
+        )
+    conn.commit()
+    conn.close()
+
+
+def listar_fatos_validados(analise_id):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT nome_fato, valor_fato, fonte, validado_em, validado_por_usuario_id
+        FROM analises_fatos_validados
+        WHERE analise_id = ?
+        ORDER BY nome_fato COLLATE NOCASE ASC
+        """,
+        (int(analise_id),),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "nome_fato": r[0],
+            "valor_fato": r[1],
+            "fonte": r[2],
+            "validado_em": r[3],
+            "validado_por_usuario_id": r[4],
+        }
+        for r in rows
+    ]
+
+
+def obter_mapa_fatos_validados(analise_id) -> dict[str, str]:
+    """Mapa nome_fato → valor (uso futuro score_engine v2 — apenas fatos aprovados)."""
+    out = {}
+    for row in listar_fatos_validados(analise_id):
+        out[str(row["nome_fato"])] = str(row["valor_fato"] or "")
+    return out
+
+
+def _hash_api_key_secreta(api_key_plain: str) -> str:
+    """SHA-256 hex da chave — único valor persistido (nunca armazenar o segredo em texto puro)."""
+    return hashlib.sha256(str(api_key_plain).encode("utf-8")).hexdigest()
+
+
+def gerar_e_salvar_api_key(empresa_id) -> str:
+    """
+    Revoga chaves ativas da empresa, gera nova chave e persiste apenas o hash.
+    Retorna o segredo em texto claro uma única vez para exibição ao administrador.
+    """
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    eid = int(empresa_id)
+    cursor.execute(
+        """
+        UPDATE empresa_api_keys SET revogada_em = ?
+        WHERE empresa_id = ? AND revogada_em IS NULL
+        """,
+        (agora, eid),
+    )
+    plain = f"dpia_{secrets.token_urlsafe(32)}"
+    digest = _hash_api_key_secreta(plain)
+    cursor.execute(
+        """
+        INSERT INTO empresa_api_keys (empresa_id, api_key_hash, criada_em, revogada_em)
+        VALUES (?, ?, ?, NULL)
+        """,
+        (eid, digest, agora),
+    )
+    conn.commit()
+    conn.close()
+    return plain
+
+
+def revogar_api_key(empresa_id) -> int:
+    """Marca todas as chaves ativas da empresa como revogadas. Retorna linhas afetadas."""
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        """
+        UPDATE empresa_api_keys SET revogada_em = ?
+        WHERE empresa_id = ? AND revogada_em IS NULL
+        """,
+        (agora, int(empresa_id)),
+    )
+    n = cursor.rowcount if cursor.rowcount is not None else 0
+    conn.commit()
+    conn.close()
+    return int(n)
+
+
+def validar_api_key(api_key_fornecida) -> int | None:
+    """
+    Valida Bearer token contra hash armazenado.
+    Retorna empresa_id se a chave existir e não estiver revogada; caso contrário None.
+    """
+    if api_key_fornecida is None:
+        return None
+    raw = str(api_key_fornecida).strip()
+    if not raw:
+        return None
+    digest = _hash_api_key_secreta(raw)
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT empresa_id FROM empresa_api_keys
+        WHERE api_key_hash = ? AND revogada_em IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (digest,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return int(row[0])
+
+
+def obter_metadados_chave_api_ativa(empresa_id) -> dict | None:
+    """Última chave não revogada da empresa (sem revelar segredo)."""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, criada_em FROM empresa_api_keys
+        WHERE empresa_id = ? AND revogada_em IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (int(empresa_id),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"id": int(row[0]), "criada_em": str(row[1] or "")}
+
+
+def obter_ultima_sincronizacao_funcionarios(empresa_id) -> str | None:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT MAX(ultima_atualizacao) FROM empresa_funcionarios_integracao
+        WHERE empresa_id = ?
+        """,
+        (int(empresa_id),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row or row[0] is None:
+        return None
+    return str(row[0])
+
+
+def contar_funcionarios_integracao(empresa_id) -> int:
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM empresa_funcionarios_integracao
+        WHERE empresa_id = ?
+        """,
+        (int(empresa_id),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0] or 0) if row else 0
+
+
+def listar_funcionarios_integracao(empresa_id) -> list[dict]:
+    """Todos os registros de funcionários sincronizados para a empresa (auditoria em massa)."""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, empresa_id, employee_id_externo, nome_completo, data_admissao,
+               cargo, salario_bruto, tipo_contrato, ultima_atualizacao
+        FROM empresa_funcionarios_integracao
+        WHERE empresa_id = ?
+        ORDER BY nome_completo COLLATE NOCASE ASC
+        """,
+        (int(empresa_id),),
+    )
+    cols = [
+        "id",
+        "empresa_id",
+        "employee_id_externo",
+        "nome_completo",
+        "data_admissao",
+        "cargo",
+        "salario_bruto",
+        "tipo_contrato",
+        "ultima_atualizacao",
+    ]
+    out = []
+    for row in cursor.fetchall():
+        out.append({cols[i]: row[i] for i in range(len(cols))})
+    conn.close()
+    return out
+
+
+def salvar_auditoria_risco_massa(empresa_id, executada_por_usuario_id, resultado: dict) -> int:
+    """Persiste snapshot JSON da auditoria. Retorna id da linha inserida."""
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload = json.dumps(resultado, ensure_ascii=False)
+    cursor.execute(
+        """
+        INSERT INTO empresa_auditorias_risco (
+            empresa_id, executada_em, executada_por_usuario_id, resultado_json
+        )
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            int(empresa_id),
+            agora,
+            int(executada_por_usuario_id or 0),
+            payload,
+        ),
+    )
+    rid = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def obter_ultima_auditoria_risco_massa(empresa_id) -> dict | None:
+    """Última auditoria gravada para a empresa, ou None."""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, executada_em, executada_por_usuario_id, resultado_json
+        FROM empresa_auditorias_risco
+        WHERE empresa_id = ?
+        ORDER BY datetime(executada_em) DESC, id DESC
+        LIMIT 1
+        """,
+        (int(empresa_id),),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    raw_json = row[3]
+    try:
+        resultado = json.loads(raw_json) if raw_json else {}
+    except json.JSONDecodeError:
+        resultado = {}
+    return {
+        "id": int(row[0]),
+        "executada_em": str(row[1] or ""),
+        "executada_por_usuario_id": int(row[2] or 0),
+        "resultado": resultado if isinstance(resultado, dict) else {},
+    }
+
+
+def upsert_funcionarios_integracao_lote(empresa_id, employees: list) -> int:
+    """
+    Insere ou atualiza funcionários por employee_id_externo (uso pelo endpoint REST futuro).
+    Ignora entradas sem employee_id_externo. Retorna quantidade processada.
+    """
+    if not employees:
+        return 0
+    conn = conectar()
+    cursor = conn.cursor()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    eid = int(empresa_id)
+    n = 0
+    for raw in employees:
+        if not isinstance(raw, dict):
+            continue
+        ext_id = str(raw.get("employee_id_externo") or "").strip()
+        if not ext_id:
+            continue
+        nome = str(raw.get("nome_completo") or "").strip() or "(sem nome)"
+        adm = raw.get("data_admissao")
+        data_adm = None if adm is None else str(adm).strip() or None
+        cargo = raw.get("cargo")
+        cargo_s = None if cargo is None else str(cargo).strip() or None
+        sal = raw.get("salario_bruto")
+        try:
+            salario = float(sal) if sal is not None and str(sal).strip() != "" else None
+        except (TypeError, ValueError):
+            salario = None
+        tipo = raw.get("tipo_contrato")
+        tipo_s = None if tipo is None else str(tipo).strip() or None
+        cursor.execute(
+            """
+            INSERT INTO empresa_funcionarios_integracao (
+                empresa_id, employee_id_externo, nome_completo, data_admissao,
+                cargo, salario_bruto, tipo_contrato, ultima_atualizacao
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(empresa_id, employee_id_externo) DO UPDATE SET
+                nome_completo = excluded.nome_completo,
+                data_admissao = excluded.data_admissao,
+                cargo = excluded.cargo,
+                salario_bruto = excluded.salario_bruto,
+                tipo_contrato = excluded.tipo_contrato,
+                ultima_atualizacao = excluded.ultima_atualizacao
+            """,
+            (eid, ext_id, nome, data_adm, cargo_s, salario, tipo_s, agora),
+        )
+        n += 1
+    conn.commit()
+    conn.close()
+    return n
+
+
+def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
+    conn = conectar()
+    cursor = conn.cursor()
+    if criado_por_usuario_id is not None:
+        cursor.execute(
+            """
+            SELECT tipo_caso, risco, data_analise
+            FROM analises
+            WHERE empresa_id = ?
+              AND COALESCE(criado_por_usuario_id, -1) = ?
+              AND COALESCE(tipo_caso, '') != ?
+            ORDER BY datetime(data_analise) DESC
+            LIMIT ?
+            """,
+            (
+                empresa_id,
+                int(criado_por_usuario_id),
+                TIPO_ANALISE_STUB_VALIDACAO_FATOS,
+                int(limite),
+            ),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT tipo_caso, risco, data_analise
+            FROM analises
+            WHERE empresa_id = ?
+              AND COALESCE(tipo_caso, '') != ?
+            ORDER BY datetime(data_analise) DESC
+            LIMIT ?
+            """,
+            (empresa_id, TIPO_ANALISE_STUB_VALIDACAO_FATOS, int(limite)),
+        )
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return {
+            "total_ocorrencias": 0,
+            "tipos_frequentes": [],
+            "riscos_frequentes": [],
+            "resumo": "Com base no histórico da empresa, ainda não há ocorrências registradas.",
+        }
+
+    contagem_tipos = {}
+    contagem_riscos = {}
+    for tipo_caso, risco, _ in rows:
+        tipo_key = str(tipo_caso or "não_classificado")
+        risco_key = str(risco or "INCONCLUSIVO").upper()
+        contagem_tipos[tipo_key] = contagem_tipos.get(tipo_key, 0) + 1
+        contagem_riscos[risco_key] = contagem_riscos.get(risco_key, 0) + 1
+
+    tipos_frequentes = sorted(contagem_tipos.items(), key=lambda x: x[1], reverse=True)
+    riscos_frequentes = sorted(contagem_riscos.items(), key=lambda x: x[1], reverse=True)
+    tipo_principal = tipos_frequentes[0][0]
+    resumo = f"Com base no histórico da empresa, você já teve ocorrências de {tipo_principal} anteriormente."
+
+    return {
+        "total_ocorrencias": len(rows),
+        "tipos_frequentes": tipos_frequentes,
+        "riscos_frequentes": riscos_frequentes,
+        "resumo": resumo,
+    }
 
 
 def salvar_feedback_resultado_analise(
@@ -1422,17 +2941,82 @@ def admin_listar_usuarios_gestao():
     return rows
 
 
+def admin_listar_todos_usuarios_catalogo() -> list[dict]:
+    """
+    Catálogo global de usuários para Super Admin.
+    Inclui nome, e-mail, data de cadastro (referência), status e plano.
+    """
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT
+            u.id,
+            COALESCE(NULLIF(TRIM(u.nome), ''), '') AS nome,
+            COALESCE(u.email, '') AS email,
+            COALESCE(
+                (SELECT MIN(created_at) FROM assinaturas a WHERE a.usuario_id = u.id),
+                ''
+            ) AS data_cadastro,
+            COALESCE(u.bloqueado, 0) AS bloqueado,
+            COALESCE(s.plano, 'FREE') AS plano,
+            COALESCE(s.status, 'active') AS status_assinatura
+        FROM usuarios u
+        LEFT JOIN assinaturas s ON s.usuario_id = u.id
+        ORDER BY u.id DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        bloqueado = int(r[4] or 0) == 1
+        status_assin = str(r[6] or "active").lower()
+        if bloqueado:
+            status_usuario = "Bloqueado"
+        elif status_assin == "suspended":
+            status_usuario = "Suspenso"
+        else:
+            status_usuario = "Ativo"
+        out.append(
+            {
+                "id_usuario": int(r[0]),
+                "nome": str(r[1] or ""),
+                "email": str(r[2] or ""),
+                "data_cadastro": str(r[3] or ""),
+                "status_usuario": status_usuario,
+                "plano_atual": str(r[5] or "FREE"),
+            }
+        )
+    return out
+
+
 def admin_definir_bloqueio_usuario(usuario_id, bloqueado: int, actor_admin_id=None) -> bool:
     if int(bloqueado) == 1 and _email_admin_master(obter_email_usuario(usuario_id)):
         return False
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
+        "SELECT COALESCE(bloqueado, 0) FROM usuarios WHERE id = ?",
+        (int(usuario_id),),
+    )
+    row_b = cursor.fetchone()
+    anterior_bloqueado = int(row_b[0] or 0) if row_b else 0
+    novo_bloqueado = 1 if int(bloqueado) else 0
+    cursor.execute(
         "UPDATE usuarios SET bloqueado = ? WHERE id = ?",
-        (1 if int(bloqueado) else 0, int(usuario_id)),
+        (novo_bloqueado, int(usuario_id)),
     )
     conn.commit()
     conn.close()
+    if anterior_bloqueado != novo_bloqueado:
+        registrar_mudanca_status_usuario(
+            usuario_id=int(usuario_id),
+            status_anterior="bloqueado" if anterior_bloqueado else "ativo",
+            status_novo="bloqueado" if novo_bloqueado else "ativo",
+            alterado_por="superadmin",
+            motivo="admin_definir_bloqueio_usuario",
+        )
     registrar_admin_audit(
         admin_user_id=actor_admin_id,
         action="admin_set_user_block",
@@ -1456,7 +3040,12 @@ def admin_definir_plano_e_status(usuario_id, plano: str, status_assinatura: str,
     status_assinatura = str(status_assinatura or "active").lower()
     if status_assinatura not in ("active", "suspended"):
         status_assinatura = "active"
-    definir_plano_usuario(int(usuario_id), plano, status=status_assinatura)
+    definir_plano_usuario(
+        int(usuario_id),
+        plano,
+        status=status_assinatura,
+        alterado_por="superadmin",
+    )
     registrar_admin_audit(
         admin_user_id=actor_admin_id,
         action="admin_set_plan_status",

@@ -10,7 +10,7 @@ from config_pricing import STARTER, PRO, BUSINESS
 from ui.theme import apply_global_theme
 
 # Número WhatsApp (apenas dígitos, ex.: 5511987654321). Sobrescreva com MP_WHATSAPP_PHONE.
-_MP_WHATSAPP_DEFAULT = "5511999999999"
+_MP_WHATSAPP_DEFAULT = "5514996867332"
 MP_WHATSAPP_PHONE = "".join(
     c for c in os.environ.get("MP_WHATSAPP_PHONE", _MP_WHATSAPP_DEFAULT) if c.isdigit()
 ) or _MP_WHATSAPP_DEFAULT

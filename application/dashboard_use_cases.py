@@ -3,8 +3,8 @@ from insights_service import gerar_insights_empresa
 from relatorio_service import gerar_relatorio_empresa
 
 
-def gerar_insights_empresa_uc(empresa_id):
-    return gerar_insights_empresa(empresa_id)
+def gerar_insights_empresa_uc(empresa_id, criado_por_usuario_id=None):
+    return gerar_insights_empresa(empresa_id, criado_por_usuario_id=criado_por_usuario_id)
 
 
 def carregar_dados_dashboard_uc():

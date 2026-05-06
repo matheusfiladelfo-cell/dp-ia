@@ -1,6 +1,6 @@
 import streamlit as st
 
-from banco import cadastrar_empresa, listar_empresas
+from banco import adicionar_ou_atualizar_membro_empresa, cadastrar_empresa, listar_empresas
 
 
 def listar_empresas_usuario(usuario_id):
@@ -13,10 +13,11 @@ def selecionar_empresa(empresa_id):
 
 
 def cadastrar_empresa_usuario(usuario_id, nome, cnpj, cidade, estado):
-    cadastrar_empresa(
+    empresa_id = cadastrar_empresa(
         usuario_id,
         nome,
         cnpj,
         cidade,
         estado,
     )
+    adicionar_ou_atualizar_membro_empresa(int(empresa_id), int(usuario_id), "admin")

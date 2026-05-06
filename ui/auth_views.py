@@ -132,3 +132,21 @@ Mais segurança jurídica. Menos decisões erradas.
     st.markdown("</div>", unsafe_allow_html=True)
 
     return aba, email, senha, acao_clicada
+
+
+def render_primeiro_acesso_view(email_convite: str):
+    st.markdown("### Primeiro acesso")
+    st.caption(f"Convite para: **{email_convite}**")
+    with st.form("primeiro_acesso_form", clear_on_submit=False):
+        nova_senha = st.text_input(
+            "Defina sua senha",
+            type="password",
+            placeholder="Mínimo de 8 caracteres",
+        )
+        confirmar = st.text_input(
+            "Confirme sua senha",
+            type="password",
+            placeholder="Repita a senha",
+        )
+        enviar = st.form_submit_button("Salvar senha e continuar", type="primary")
+    return nova_senha, confirmar, enviar

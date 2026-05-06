@@ -20,5 +20,8 @@ def processar_cadastro(email, senha):
 
 
 def processar_logout():
-    del st.session_state["user_id"]
+    st.session_state.pop("user_id", None)
+    st.session_state.pop("perfil_usuario", None)
+    st.session_state.pop("empresa_id", None)
+    st.session_state.pop("area_principal_mp", None)
     st.rerun()

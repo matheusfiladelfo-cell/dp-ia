@@ -53,7 +53,12 @@ def confirmar_pagamento_checkout(external_reference, status, external_subscripti
     )
 
     if aprovado:
-        definir_plano_usuario(usuario_id, plano_destino, status="active")
+        definir_plano_usuario(
+            usuario_id,
+            plano_destino,
+            status="active",
+            alterado_por="pagamento_webhook",
+        )
         return {
             "ok": True,
             "updated_plan": plano_destino,

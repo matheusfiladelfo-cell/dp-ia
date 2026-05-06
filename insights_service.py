@@ -1,14 +1,29 @@
-from banco import conectar
+from banco import TIPO_ANALISE_STUB_VALIDACAO_FATOS, conectar
 
 
-def gerar_insights_empresa(empresa_id):
+def gerar_insights_empresa(empresa_id, criado_por_usuario_id=None):
     conn = conectar()
     cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT risco, tipo_caso FROM analises
-    WHERE empresa_id = ?
-    """, (empresa_id,))
+    if criado_por_usuario_id is not None:
+        cursor.execute(
+            """
+            SELECT risco, tipo_caso FROM analises
+            WHERE empresa_id = ?
+              AND COALESCE(criado_por_usuario_id, -1) = ?
+              AND COALESCE(tipo_caso, '') != ?
+            """,
+            (empresa_id, int(criado_por_usuario_id), TIPO_ANALISE_STUB_VALIDACAO_FATOS),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT risco, tipo_caso FROM analises
+            WHERE empresa_id = ?
+              AND COALESCE(tipo_caso, '') != ?
+            """,
+            (empresa_id, TIPO_ANALISE_STUB_VALIDACAO_FATOS),
+        )
 
     rows = cursor.fetchall()
     conn.close()

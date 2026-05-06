@@ -12,3 +12,4 @@ def get_sessao():
 
 def resetar_sessao():
     st.session_state.sessao_dp_ia = MemoriaSessao()
+    st.session_state.pop("chat_documentos_processados_sig", None)
