@@ -2381,16 +2381,35 @@ def garantir_onboarding_usuario(usuario_id):
     conn = conectar()
     cursor = conn.cursor()
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
-    INSERT OR IGNORE INTO onboarding_usuario (
-        usuario_id,
-        etapa_atual,
-        concluido,
-        criado_em,
-        atualizado_em
-    )
-    VALUES (?, 1, 0, ?, ?)
-    """, (usuario_id, agora, agora))
+    if IS_POSTGRES:
+        cursor.execute(
+            """
+            INSERT INTO onboarding_usuario (
+                usuario_id,
+                etapa_atual,
+                concluido,
+                criado_em,
+                atualizado_em
+            )
+            VALUES (?, 1, 0, ?, ?)
+            ON CONFLICT (usuario_id) DO NOTHING
+            """,
+            (usuario_id, agora, agora),
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO onboarding_usuario (
+                usuario_id,
+                etapa_atual,
+                concluido,
+                criado_em,
+                atualizado_em
+            )
+            VALUES (?, 1, 0, ?, ?)
+            """,
+            (usuario_id, agora, agora),
+        )
     conn.commit()
     conn.close()
 
