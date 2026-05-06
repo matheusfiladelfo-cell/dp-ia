@@ -880,33 +880,99 @@ def registrar_evento_produto(
     conn.close()
 
 
-def _garantir_colunas_leads_crm():
+def _colunas_existentes_leads() -> set[str]:
+    """Lista nomes de colunas da tabela `leads` (SQLite ou PostgreSQL)."""
     conn = conectar()
     cursor = conn.cursor()
-    for stmt in (
-        "ALTER TABLE leads ADD COLUMN status TEXT DEFAULT 'novo'",
-        "ALTER TABLE leads ADD COLUMN observacoes TEXT DEFAULT ''",
-        "ALTER TABLE leads ADD COLUMN atualizado_em TEXT",
-    ):
-        try:
-            cursor.execute(stmt)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
-    cursor.execute(
-        """
-        UPDATE leads SET atualizado_em = criado_em
-        WHERE atualizado_em IS NULL OR TRIM(atualizado_em) = ''
-        """
+    try:
+        if IS_POSTGRES:
+            cursor.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'leads'
+                """
+            )
+            return {str(row[0] or "").lower() for row in cursor.fetchall()}
+        cursor.execute("PRAGMA table_info(leads)")
+        return {str(row[1] or "").lower() for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
+def _adicionar_coluna_leads_se_faltar(nome_coluna: str, definicao_sql: str) -> None:
+    """
+    Executa um ALTER TABLE isolado com commit próprio.
+    Evita InFailedSqlTransaction no Postgres quando uma migração falha ou coluna já existe.
+    """
+    nome_coluna = str(nome_coluna or "").strip().lower()
+    if not nome_coluna:
+        return
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        stmt = f'ALTER TABLE leads ADD COLUMN "{nome_coluna}" {definicao_sql}'
+        cursor.execute(stmt)
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        conn.rollback()
+        msg = str(exc).lower()
+        if "duplicate column" in msg or "already exists" in msg:
+            return
+        raise
+    finally:
+        conn.close()
+
+
+def _garantir_colunas_leads_crm():
+    """
+    Migração leve das colunas de CRM na tabela `leads`.
+    Compatível com PostgreSQL: consulta information_schema e cada ALTER em transação isolada.
+    """
+    existentes = _colunas_existentes_leads()
+
+    # Tipagem compatível com Postgres e SQLite (TEXT).
+    desejadas = (
+        ("status", "TEXT DEFAULT 'novo'"),
+        ("observacoes", "TEXT DEFAULT ''"),
+        ("atualizado_em", "TEXT"),
     )
-    cursor.execute(
-        """
-        UPDATE leads SET status = 'novo'
-        WHERE status IS NULL OR TRIM(status) = ''
-        """
-    )
-    conn.commit()
-    conn.close()
+
+    for nome, ddl in desejadas:
+        if nome.lower() in existentes:
+            continue
+        _adicionar_coluna_leads_se_faltar(nome, ddl)
+        existentes.add(nome.lower())
+
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE leads SET atualizado_em = criado_em
+            WHERE atualizado_em IS NULL OR TRIM(COALESCE(atualizado_em::text, '')) = ''
+            """
+            if IS_POSTGRES
+            else """
+            UPDATE leads SET atualizado_em = criado_em
+            WHERE atualizado_em IS NULL OR TRIM(atualizado_em) = ''
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE leads SET status = 'novo'
+            WHERE status IS NULL OR TRIM(COALESCE(status::text, '')) = ''
+            """
+            if IS_POSTGRES
+            else """
+            UPDATE leads SET status = 'novo'
+            WHERE status IS NULL OR TRIM(status) = ''
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _append_lead_csv_fallback(row):
