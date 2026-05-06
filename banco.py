@@ -1095,28 +1095,57 @@ def criar_usuario(email, senha, nome=None):
     usuario_id = cursor.lastrowid
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor.execute("""
-    INSERT OR IGNORE INTO assinaturas (
-        usuario_id,
-        plano,
-        status,
-        billing_cycle,
-        created_at,
-        updated_at
-    )
-    VALUES (?, 'FREE', 'active', 'monthly', ?, ?)
-    """, (usuario_id, agora, agora))
+    if IS_POSTGRES:
+        sql_assinaturas = """
+        INSERT INTO assinaturas (
+            usuario_id,
+            plano,
+            status,
+            billing_cycle,
+            created_at,
+            updated_at
+        )
+        VALUES (?, 'FREE', 'active', 'monthly', ?, ?)
+        ON CONFLICT (usuario_id) DO NOTHING
+        """
+    else:
+        sql_assinaturas = """
+        INSERT OR IGNORE INTO assinaturas (
+            usuario_id,
+            plano,
+            status,
+            billing_cycle,
+            created_at,
+            updated_at
+        )
+        VALUES (?, 'FREE', 'active', 'monthly', ?, ?)
+        """
+    cursor.execute(sql_assinaturas, (usuario_id, agora, agora))
 
-    cursor.execute("""
-    INSERT OR IGNORE INTO onboarding_usuario (
-        usuario_id,
-        etapa_atual,
-        concluido,
-        criado_em,
-        atualizado_em
-    )
-    VALUES (?, 1, 0, ?, ?)
-    """, (usuario_id, agora, agora))
+    if IS_POSTGRES:
+        sql_onboarding = """
+        INSERT INTO onboarding_usuario (
+            usuario_id,
+            etapa_atual,
+            concluido,
+            criado_em,
+            atualizado_em
+        )
+        VALUES (?, 1, 0, ?, ?)
+        ON CONFLICT (usuario_id) DO NOTHING
+        """
+    else:
+        sql_onboarding = """
+        INSERT OR IGNORE INTO onboarding_usuario (
+            usuario_id,
+            etapa_atual,
+            concluido,
+            criado_em,
+            atualizado_em
+        )
+        VALUES (?, 1, 0, ?, ?)
+        """
+    cursor.execute(sql_onboarding, (usuario_id, agora, agora))
 
     conn.commit()
     conn.close()
