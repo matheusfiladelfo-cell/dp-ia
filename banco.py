@@ -30,6 +30,11 @@ DB_NAME = "dpia.db"
 _LOGIN_MAX_FAILED = 5
 _LOGIN_WINDOW_SECONDS = 10 * 60
 _LOGIN_BLOCK_SECONDS = 3 * 60
+
+# Render define RENDER=true nos Web Services (documentação oficial).
+_IS_RENDER = str(os.getenv("RENDER", "")).strip().lower() in {"1", "true", "yes"}
+
+# PostgreSQL: somente quando DATABASE_URL está definida (Render ou desenvolvimento com Postgres).
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
 
@@ -45,10 +50,32 @@ def _normalize_database_url(database_url: str) -> str:
     return database_url
 
 
+def _postgres_engine_url() -> str | None:
+    """Retorna URL SQLAlchemy para psycopg2, ou None se não houver Postgres configurado."""
+    if not DATABASE_URL:
+        return None
+    normalized = _normalize_database_url(DATABASE_URL)
+    return normalized or None
+
+
 def _build_engine():
-    normalized_url = _normalize_database_url(DATABASE_URL)
-    if normalized_url:
-        return create_engine(normalized_url, pool_pre_ping=True, future=True)
+    """
+    Render com Postgres: exige DATABASE_URL (evita cair em SQLite por engano).
+    Local: SQLite em arquivo quando DATABASE_URL está vazia; caso contrário Postgres.
+    """
+    pg_url = _postgres_engine_url()
+
+    if _IS_RENDER:
+        if not pg_url:
+            raise RuntimeError(
+                "Ambiente Render detectado (RENDER=true), mas DATABASE_URL não está definida. "
+                "Configure DATABASE_URL no Web Service apontando para o Postgres."
+            )
+        return create_engine(pg_url, pool_pre_ping=True, future=True)
+
+    if pg_url:
+        return create_engine(pg_url, pool_pre_ping=True, future=True)
+
     return create_engine(
         f"sqlite:///{DB_NAME}",
         future=True,
@@ -57,6 +84,7 @@ def _build_engine():
 
 
 ENGINE = _build_engine()
+# Dialetal real do engine (postgresql vs sqlite); `conectar()` usa psycopg2 via raw_connection em Postgres.
 IS_POSTGRES = ENGINE.dialect.name == "postgresql"
 
 
@@ -328,6 +356,11 @@ def resetar_falhas_login(email: str | None, ip: str | None = None) -> None:
 # CONEXÃO CENTRALIZADA
 # =========================
 def conectar():
+    """
+    Abre conexão de acordo com o ambiente:
+    - DATABASE_URL definida (ou obrigatoriamente no Render): SQLAlchemy + psycopg2 → Postgres.
+    - Sem DATABASE_URL fora do Render: SQLite (sqlite3 via SQLAlchemy).
+    """
     raw_connection = ENGINE.raw_connection()
     if IS_POSTGRES:
         return _CompatConnection(raw_connection)
