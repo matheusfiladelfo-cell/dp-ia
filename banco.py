@@ -476,6 +476,30 @@ def _garantir_coluna_usuarios_nome():
         conn.close()
 
 
+def _garantir_coluna_usuarios_reset_token():
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN reset_token TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
+def _garantir_coluna_usuarios_reset_token_expires():
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN reset_token_expires TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
 def _garantir_coluna_analises_criado_por():
     conn = conectar()
     cursor = conn.cursor()
@@ -812,6 +836,8 @@ def criar_tabelas():
     _garantir_coluna_usuarios_bloqueado()
     _garantir_coluna_usuarios_is_admin()
     _garantir_coluna_usuarios_nome()
+    _garantir_coluna_usuarios_reset_token()
+    _garantir_coluna_usuarios_reset_token_expires()
     _garantir_coluna_analises_criado_por()
     _garantir_colunas_leads_crm()
     _bootstrap_admin_master()
@@ -1195,6 +1221,131 @@ def atualizar_senha_usuario(usuario_id, nova_senha: str):
     conn.close()
 
 
+_RESET_TOKEN_VIDA_HORAS = 1
+
+
+def _hash_reset_token(token_plain: str) -> str:
+    return hashlib.sha256(str(token_plain).strip().encode("utf-8")).hexdigest()
+
+
+def gerar_token_reset_senha(email: str | None) -> str | None:
+    """
+    Gera token seguro, persiste hash + expiração em usuarios e retorna o token em texto claro
+    (uso único: enviar por e-mail). Retorna None se o e-mail não existir.
+    """
+    em = (email or "").strip().lower()
+    if not em:
+        return None
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id FROM usuarios
+        WHERE LOWER(TRIM(COALESCE(email, ''))) = ?
+        """,
+        (em,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+
+    usuario_id = int(row[0])
+    token_plain = secrets.token_urlsafe(48)
+    token_hash = _hash_reset_token(token_plain)
+    expira = datetime.now() + timedelta(hours=_RESET_TOKEN_VIDA_HORAS)
+    expira_txt = expira.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET reset_token = ?, reset_token_expires = ?
+        WHERE id = ?
+        """,
+        (token_hash, expira_txt, usuario_id),
+    )
+    conn.commit()
+    conn.close()
+    return token_plain
+
+
+def validar_token_e_resetar_senha(token: str | None, nova_senha: str) -> tuple[bool, str]:
+    """
+    Valida token de reset e define nova senha. Limpa reset_token / reset_token_expires em caso de sucesso.
+    Retorna (ok, mensagem).
+    """
+    senha = str(nova_senha or "")
+    if len(senha) < 8:
+        return False, "A senha deve ter pelo menos 8 caracteres."
+
+    token_limpo = str(token or "").strip()
+    if not token_limpo:
+        return False, "Token inválido."
+
+    token_hash = _hash_reset_token(token_limpo)
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, COALESCE(reset_token_expires, '')
+        FROM usuarios
+        WHERE reset_token IS NOT NULL AND reset_token = ?
+        """,
+        (token_hash,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False, "Token inválido ou expirado."
+
+    usuario_id = int(row[0])
+    expira_raw = str(row[1] or "").strip()
+    conn.close()
+
+    if not expira_raw:
+        return False, "Token inválido ou expirado."
+
+    try:
+        expira_dt = datetime.strptime(expira_raw, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False, "Token inválido ou expirado."
+
+    if datetime.now() > expira_dt:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE usuarios SET reset_token = NULL, reset_token_expires = NULL WHERE id = ?
+            """,
+            (usuario_id,),
+        )
+        conn.commit()
+        conn.close()
+        return False, "Token expirado. Solicite uma nova redefinição de senha."
+
+    try:
+        atualizar_senha_usuario(usuario_id, senha)
+    except ValueError as exc:
+        return False, str(exc)
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET reset_token = NULL, reset_token_expires = NULL
+        WHERE id = ?
+        """,
+        (usuario_id,),
+    )
+    conn.commit()
+    conn.close()
+    return True, "Senha atualizada com sucesso."
+
+
 def login_usuario(email, senha):
     conn = conectar()
     cursor = conn.cursor()
@@ -1225,7 +1376,13 @@ def login_usuario(email, senha):
     if status_assin == "suspended" and not master_ok:
         return None
 
-    if bcrypt.checkpw(senha.encode(), senha_hash):
+    # bcrypt exige bytes; Postgres/psycopg pode devolver senha_hash como str (ASCII bcrypt).
+    if isinstance(senha_hash, (bytes, bytearray, memoryview)):
+        senha_hash_bytes = bytes(senha_hash)
+    else:
+        senha_hash_bytes = str(senha_hash).encode("utf-8")
+
+    if bcrypt.checkpw(str(senha or "").encode("utf-8"), senha_hash_bytes):
         promover_admin_por_email_se_necessario(user_id, email)
         resetar_falhas_login(email)
         return user_id

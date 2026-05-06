@@ -72,7 +72,12 @@ from ui.layout import (
     render_section_title,
     render_footer,
 )
-from ui.auth_views import render_auth_view, render_primeiro_acesso_view
+from ui.auth_views import (
+    render_auth_view,
+    render_esqueci_senha_view,
+    render_primeiro_acesso_view,
+    render_reset_password_view,
+)
 from ui.empresa_views import render_empresas_sidebar, render_nova_empresa_sidebar
 from ui.insights_views import render_insights_empresa
 from ui.usage_views import render_usage
@@ -97,6 +102,15 @@ from ui.onboarding_views import (
 )
 
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+
+
+def _query_param_scalar(key: str) -> str:
+    raw = st.query_params.get(key)
+    if raw is None:
+        return ""
+    if isinstance(raw, (list, tuple)):
+        return str(raw[0] if raw else "").strip()
+    return str(raw).strip()
 
 
 def _enforce_production_security_env():
@@ -381,6 +395,12 @@ carregar_css_customizado()
 # LOGIN
 # =========================
 if "user_id" not in st.session_state:
+    page_reset = _query_param_scalar("page").lower()
+    token_redef = _query_param_scalar("token")
+    if page_reset == "reset_password" and token_redef:
+        render_reset_password_view(token_redef)
+        st.stop()
+
     token_convite = str(st.query_params.get("convite", "") or "").strip()
     if token_convite:
         convite = validar_token_convite_primeiro_acesso(token_convite)
@@ -422,6 +442,10 @@ if "user_id" not in st.session_state:
     )
     if st.session_state.pop("session_timeout_notice", False):
         st.info("Sua sessão expirou por inatividade. Faça login novamente para continuar.")
+
+    if st.session_state.get("auth_view_mode") == "forgot_password":
+        render_esqueci_senha_view()
+        st.stop()
 
     aba, email, senha, acao_clicada = render_auth_view(
         default_tab=default_tab,
