@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from streamlit_option_menu import option_menu
 
 from banco import (
+    conectar,
     concluir_convite_primeiro_acesso,
     criar_tabelas,
     obter_email_usuario,
@@ -102,6 +103,7 @@ from ui.onboarding_views import (
 )
 
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+DEBUG_ACCESS_CODE = str(os.getenv("DEBUG_ACCESS_CODE", "diagnostico_mp_789")).strip()
 
 
 def _query_param_scalar(key: str) -> str:
@@ -389,6 +391,66 @@ st.set_page_config(page_title="DP-IA", layout="wide")
 _enforce_production_security_env()
 render_app_theme()
 carregar_css_customizado()
+
+# =========================
+# DEBUG TEMPORARIO (PRODUCAO)
+# =========================
+page = _query_param_scalar("page").lower()
+access_code = _query_param_scalar("code")
+if page == "debug":
+    if access_code != DEBUG_ACCESS_CODE:
+        st.error("Acesso negado.")
+        st.stop()
+
+    st.title("Pagina de Diagnostico do Banco de Dados")
+    st.caption("Uso temporario para investigacao de producao.")
+
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        email_debug = "matheus.filadelfo@gmail.com"
+        if conn.__class__.__module__.startswith("sqlite3"):
+            cursor.execute(
+                """
+                SELECT id, email, senha_hash, is_admin, criado_em
+                FROM usuarios
+                WHERE email = ?
+                """,
+                (email_debug,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, email, senha_hash, is_admin, criado_em
+                FROM usuarios
+                WHERE email = %s
+                """,
+                (email_debug,),
+            )
+        resultado = cursor.fetchone()
+
+        st.subheader("Resultado da query")
+        if resultado:
+            st.write(f"ID: {resultado[0]}")
+            st.write(f"Email: {resultado[1]}")
+            st.write(f"Senha hash (banco): `{resultado[2]}`")
+            st.write(f"E admin: {resultado[3]}")
+            st.write(f"Criado em: {resultado[4]}")
+        else:
+            st.warning("Usuario nao encontrado no banco de dados.")
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao acessar o banco de dados: {e}")
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    st.stop()
 
 
 # =========================
