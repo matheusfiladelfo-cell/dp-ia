@@ -228,6 +228,20 @@ def _admin_master_email() -> str | None:
     return str(raw).strip().lower()
 
 
+def _admin_master_password_for_sync() -> str | None:
+    """
+    Senha em texto vinda de ADMIN_MASTER_PASSWORD para bootstrap/sync no deploy.
+    Ausente, vazia ou com menos de 8 caracteres: não sincroniza (alinha a atualizar_senha_usuario).
+    """
+    raw = os.environ.get("ADMIN_MASTER_PASSWORD")
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if len(s) < 8:
+        return None
+    return s
+
+
 def _email_admin_master(email: str | None) -> bool:
     master = _admin_master_email()
     if not email or not master:
@@ -399,24 +413,52 @@ def _garantir_coluna_usuarios_is_admin():
 
 def _bootstrap_admin_master():
     """
-    Bootstrap opcional via ADMIN_MASTER_EMAIL:
-    se definida, garante somente este usuário com is_admin=1.
+    Bootstrap via ADMIN_MASTER_EMAIL (+ ADMIN_MASTER_PASSWORD opcional mas recomendado):
+    - Garante somente este e-mail com is_admin=1 (demais is_admin=0).
+    - Se ADMIN_MASTER_PASSWORD estiver definida (≥8 caracteres):
+      - usuário inexistente: cria conta com essa senha (fluxo criar_usuario);
+      - usuário existente: atualiza senha_hash para espelhar o ambiente a cada deploy.
     """
-    master = _admin_master_email()
-    if not master:
+    raw_email = (os.environ.get("ADMIN_MASTER_EMAIL") or "").strip()
+    if not raw_email:
         return
+    master_lower = raw_email.lower()
+    pwd_sync = _admin_master_password_for_sync()
+
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
         """
+        SELECT id FROM usuarios
+        WHERE LOWER(TRIM(COALESCE(email, ''))) = ?
+        """,
+        (master_lower,),
+    )
+    row = cursor.fetchone()
+
+    if pwd_sync:
+        senha_hash = bcrypt.hashpw(pwd_sync.encode(), bcrypt.gensalt())
+        if row:
+            cursor.execute(
+                "UPDATE usuarios SET senha_hash = ? WHERE id = ?",
+                (senha_hash, int(row[0])),
+            )
+        else:
+            conn.commit()
+            conn.close()
+            criar_usuario(raw_email, pwd_sync)
+            conn = conectar()
+            cursor = conn.cursor()
+
+    cursor.execute(
+        """
         UPDATE usuarios
         SET is_admin = CASE
-            WHEN LOWER(COALESCE(email, '')) = ? THEN 1
+            WHEN LOWER(TRIM(COALESCE(email, ''))) = ? THEN 1
             ELSE 0
         END
-        """
-        ,
-        (master,),
+        """,
+        (master_lower,),
     )
     conn.commit()
     conn.close()
