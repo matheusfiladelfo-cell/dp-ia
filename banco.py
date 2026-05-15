@@ -1,3 +1,4 @@
+import binascii
 import csv
 import hashlib
 import json
@@ -411,18 +412,25 @@ def _garantir_coluna_usuarios_is_admin():
         conn.close()
 
 
-def _normalizar_senha_hash_db(raw):
-    """Converte senha_hash do driver (bytes ou str) para str para inspeção."""
+def _normalizar_senha_hash_db(raw) -> bytes:
+    """
+    Converte senha_hash do driver para bytes usados pelo bcrypt.
+    Recupera representações hex do psycopg2 (prefixo \\x...) em hashes antigos/corrompidos.
+    """
     if raw is None:
-        return ""
+        return b""
     if isinstance(raw, (bytes, bytearray, memoryview)):
+        val = bytes(raw)
+    else:
+        val = str(raw or "").encode("utf-8")
+
+    if val.startswith(b"\\x"):
         try:
-            return bytes(raw).decode("utf-8")
+            val = binascii.unhexlify(val[2:])
         except Exception:
-            return ""
-    if isinstance(raw, str):
-        return raw
-    return ""
+            pass
+
+    return val
 
 
 def _senha_hash_bcrypt_valida(s: str) -> bool:
@@ -475,7 +483,11 @@ def _bootstrap_admin_master():
         )
         hrow = cursor.fetchone()
         raw_hash = hrow[0] if hrow else None
-        senha_hash_str = _normalizar_senha_hash_db(raw_hash)
+        senha_hash_bytes = _normalizar_senha_hash_db(raw_hash)
+        try:
+            senha_hash_str = senha_hash_bytes.decode("utf-8")
+        except Exception:
+            senha_hash_str = ""
         hash_ok = _senha_hash_bcrypt_valida(senha_hash_str)
 
     if usuario_id is not None and not hash_ok and not pwd_sync:
@@ -1185,7 +1197,16 @@ def salvar_lead_demonstracao(nome, empresa, whatsapp, email, plano_interesse):
 # =========================
 # 🔐 USUÁRIOS
 # =========================
+EMAIL_JA_CADASTRADO_MSG = "E-mail já cadastrado"
+
+
 def criar_usuario(email, senha, nome=None):
+    email_norm = str(email or "").strip()
+    if not email_norm:
+        raise ValueError("E-mail inválido")
+    if obter_usuario_id_por_email(email_norm):
+        raise ValueError(EMAIL_JA_CADASTRADO_MSG)
+
     conn = conectar()
     cursor = conn.cursor()
 
@@ -1196,7 +1217,7 @@ def criar_usuario(email, senha, nome=None):
     cursor.execute("""
     INSERT INTO usuarios (email, senha_hash, nome, data_criacao)
     VALUES (?, ?, ?, ?)
-    """, (email, senha_hash, nome_val, agora))
+    """, (email_norm, senha_hash, nome_val, agora))
 
     usuario_id = cursor.lastrowid
 
@@ -1455,11 +1476,10 @@ def login_usuario(email, senha):
     if status_assin == "suspended" and not master_ok:
         return None
 
-    # bcrypt exige bytes; Postgres/psycopg pode devolver senha_hash como str (ASCII bcrypt).
-    if isinstance(senha_hash, (bytes, bytearray, memoryview)):
-        senha_hash_bytes = bytes(senha_hash)
-    else:
-        senha_hash_bytes = str(senha_hash).encode("utf-8")
+    # Recupera hashes antigos gravados como \\x... (hex do psycopg2) via _normalizar_senha_hash_db.
+    senha_hash_bytes = _normalizar_senha_hash_db(senha_hash)
+    if not senha_hash_bytes:
+        return None
 
     if bcrypt.checkpw(str(senha or "").encode("utf-8"), senha_hash_bytes):
         promover_admin_por_email_se_necessario(user_id, email)

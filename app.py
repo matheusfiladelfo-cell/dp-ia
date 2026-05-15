@@ -494,10 +494,15 @@ if "user_id" not in st.session_state:
                     st.session_state["auth_pending_action"] = None
                     st.stop()
 
-                if processar_cadastro(email, senha):
+                cadastro = processar_cadastro(email, senha)
+                if cadastro is True:
                     st.success("Conta criada com sucesso. Faça login para continuar.")
+                elif cadastro == "duplicate":
+                    st.error(
+                        "Este e-mail já está cadastrado. Por favor, faça login ou recupere sua senha."
+                    )
                 else:
-                    st.error("Não foi possível criar a conta. Esse email pode já estar cadastrado.")
+                    st.error("Não foi possível criar a conta. Tente novamente em instantes.")
 
                 st.session_state["auth_processing"] = False
                 st.session_state["auth_pending_action"] = None

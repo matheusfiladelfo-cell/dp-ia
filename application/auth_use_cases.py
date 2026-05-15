@@ -1,6 +1,6 @@
 import streamlit as st
 
-from banco import criar_usuario, login_usuario
+from banco import EMAIL_JA_CADASTRADO_MSG, criar_usuario, login_usuario
 
 
 def processar_login(email, senha):
@@ -12,9 +12,18 @@ def processar_login(email, senha):
 
 
 def processar_cadastro(email, senha):
+    """
+    Retorna True se a conta foi criada.
+    Retorna "duplicate" se o e-mail já existe.
+    Retorna False em outros erros.
+    """
     try:
         criar_usuario(email, senha)
         return True
+    except ValueError as exc:
+        if str(exc).strip() == EMAIL_JA_CADASTRADO_MSG:
+            return "duplicate"
+        return False
     except Exception:
         return False
 
