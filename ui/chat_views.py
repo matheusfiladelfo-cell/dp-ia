@@ -11,6 +11,7 @@ from application.document_fatos_llm import (
     aplicar_fatos_documento_na_sessao,
 )
 from application.document_parser import MAX_UPLOAD_BYTES_DEFAULT, parse_documento
+from application.pdf_generator import gerar_pdf_relatorio
 
 
 def render_chat_title():
@@ -357,6 +358,13 @@ def _build_relatorio_view_model(relatorio):
     except (TypeError, ValueError):
         impacto_estimado_val = 0.0
 
+    impacto_md = str(score_v2.get("impacto_financeiro_detalhe_md") or "").strip()
+    if not impacto_md:
+        for linha in score_v2.get("racional") or []:
+            if "Estimativa de Passivo Trabalhista" in str(linha):
+                impacto_md = str(linha)
+                break
+
     return {
         "nivel_risco": nivel,
         "risco_visual": risco_visual,
@@ -364,6 +372,7 @@ def _build_relatorio_view_model(relatorio):
         "checklist": checklist,
         "checklist_html": checklist_html,
         "base_legal_html": base_legal_html,
+        "base_legal": base_legal,
         "simulacao": simulacao,
         "proximos_passos": proximos_passos,
         "proximos_passos_html": proximos_passos_html,
@@ -371,7 +380,54 @@ def _build_relatorio_view_model(relatorio):
         "recomendacao_final": recomendacao_final,
         "score_risco": int((relatorio.get("fluxo_consulta") or {}).get("pontuacao") or 0),
         "impacto_financeiro_estimado": impacto_estimado_val,
+        "impacto_financeiro_detalhe_md": impacto_md,
+        "score_engine_v2": score_v2,
     }
+
+
+def _linhas_racional_score_sem_impacto(racional: list) -> list[str]:
+    """Remove o bloco Markdown da calculadora CLT (exibido no expander de impacto)."""
+    out: list[str] = []
+    omitir = False
+    for linha in racional or []:
+        texto = str(linha or "").strip()
+        if not texto:
+            continue
+        if "Estimativa de Passivo Trabalhista" in texto:
+            omitir = True
+            continue
+        if omitir:
+            if texto.startswith("Categoria de risco"):
+                out.append(texto)
+                omitir = False
+            continue
+        out.append(texto)
+    return out
+
+
+def _render_resumo_scores(relatorio):
+    fluxo = relatorio.get("fluxo_consulta") or {}
+    try:
+        p1 = int(fluxo.get("pontuacao") or 0)
+    except (TypeError, ValueError):
+        p1 = 0
+    r1 = str(fluxo.get("risco") or "INCONCLUSIVO").upper().replace("MEDIO", "MÉDIO")
+    em1 = _emoji_risco_associado(r1 if r1 in {"ALTO", "MÉDIO", "BAIXO"} else "INCONCLUSIVO")
+    st.markdown(f"**Score v1 (conversa):** {em1} **{r1}** ({p1}/100)")
+
+    se2 = relatorio.get("score_engine_v2") or {}
+    if se2.get("disponivel") and se2.get("score_final") is not None:
+        try:
+            p2 = int(se2["score_final"])
+        except (TypeError, ValueError):
+            p2 = 0
+        n2 = str(se2.get("nivel") or "INCONCLUSIVO").upper().replace("MEDIO", "MÉDIO")
+        em2 = _emoji_risco_associado(n2 if n2 in {"ALTO", "MÉDIO", "BAIXO"} else "INCONCLUSIVO")
+        st.markdown(f"**Score v2 (fatos validados):** {em2} **{n2}** ({p2}/100)")
+    else:
+        st.caption(
+            "Score v2 indisponível: valide e salve fatos no documento anexado para pontuar com base nas evidências aprovadas."
+        )
 
 
 def _render_comparativo_scores_risco(relatorio):
@@ -402,6 +458,108 @@ def _render_comparativo_scores_risco(relatorio):
         )
 
 
+def _formatar_score_para_pdf(relatorio: dict, vm: dict) -> str:
+    linhas: list[str] = []
+    fluxo = relatorio.get("fluxo_consulta") or {}
+    try:
+        p1 = int(fluxo.get("pontuacao") or 0)
+    except (TypeError, ValueError):
+        p1 = 0
+    r1 = str(fluxo.get("risco") or "INCONCLUSIVO").upper().replace("MEDIO", "MÉDIO")
+    linhas.append(f"Score v1 (conversa): {r1} ({p1}/100)")
+
+    se2 = vm.get("score_engine_v2") or relatorio.get("score_engine_v2") or {}
+    if se2.get("disponivel") and se2.get("score_final") is not None:
+        try:
+            p2 = int(se2["score_final"])
+        except (TypeError, ValueError):
+            p2 = 0
+        n2 = str(se2.get("nivel") or "INCONCLUSIVO").upper().replace("MEDIO", "MÉDIO")
+        linhas.append(f"Score v2 (fatos validados): {n2} ({p2}/100)")
+        racional = _linhas_racional_score_sem_impacto(se2.get("racional") or [])
+        if racional:
+            linhas.append("")
+            linhas.append("Racional:")
+            linhas.extend(f"- {x}" for x in racional)
+    else:
+        linhas.append("Score v2: indisponível (valide fatos no documento anexado).")
+    return "\n".join(linhas)
+
+
+def _build_dados_pdf_relatorio(relatorio: dict, vm: dict) -> dict:
+    diag_partes = [
+        str(relatorio.get("diagnostico") or "—"),
+        "",
+        "Com base no histórico da empresa:",
+        str(vm.get("frase_historico") or "—"),
+        "",
+        "Risco jurídico:",
+        str(relatorio.get("risco_juridico") or "—"),
+    ]
+
+    acao_linhas: list[str] = []
+    for item in vm.get("checklist") or []:
+        acao_linhas.append(f"• {item}")
+    if vm.get("proximos_passos"):
+        if acao_linhas:
+            acao_linhas.append("")
+        acao_linhas.append("Próximos passos:")
+        for item in vm["proximos_passos"]:
+            acao_linhas.append(f"• {item}")
+    if relatorio.get("decisao_recomendada"):
+        if acao_linhas:
+            acao_linhas.append("")
+        acao_linhas.append("Decisão recomendada:")
+        acao_linhas.append(str(relatorio.get("decisao_recomendada")))
+    if vm.get("recomendacao_final"):
+        if acao_linhas:
+            acao_linhas.append("")
+        acao_linhas.append(f"Recomendação final: {vm['recomendacao_final']}")
+
+    impacto_md = str(vm.get("impacto_financeiro_detalhe_md") or "").strip()
+    impacto_val = float(vm.get("impacto_financeiro_estimado") or 0)
+    if not impacto_md and impacto_val > 0:
+        impacto_md = f"**Total consolidado:** {_format_reais_br(impacto_val)}"
+    impacto_narr = str(relatorio.get("impacto_financeiro") or "").strip()
+    if impacto_narr:
+        impacto_md = f"{impacto_md}\n\nContexto narrativo:\n{impacto_narr}".strip()
+
+    estrategia_partes = [str(relatorio.get("estrategia") or "—")]
+    sim = vm.get("simulacao") or {}
+    if sim:
+        estrategia_partes.extend(["", "Simulação de decisão:"])
+        for titulo, chave in (
+            ("Se demitir agora", "se_demitir_agora"),
+            ("Se regularizar antes", "se_regularizar_antes"),
+            ("Se negociar acordo", "se_negociar_acordo"),
+        ):
+            ref = sim.get(chave, "INCONCLUSIVO")
+            estrategia_partes.append(f"• {titulo}: risco {ref}")
+
+    base_legal = vm.get("base_legal") or relatorio.get("base_legal_simplificada") or []
+    base_legal_txt = "\n".join(f"• {item}" for item in base_legal) if base_legal else "—"
+
+    return {
+        "risco": vm.get("nivel_risco") or relatorio.get("nivel_risco_visual") or "INCONCLUSIVO",
+        "score": _formatar_score_para_pdf(relatorio, vm),
+        "diagnostico": "\n".join(diag_partes),
+        "impacto_financeiro": impacto_md or "Provisionamento quantitativo não disponível.",
+        "acao": "\n".join(acao_linhas) if acao_linhas else "—",
+        "estrategia": "\n".join(estrategia_partes),
+        "base_legal": base_legal_txt,
+    }
+
+
+def _render_linha_racional_score(linha: str) -> None:
+    texto = str(linha or "").strip()
+    if not texto:
+        return
+    if texto.startswith("**") or texto.startswith("* "):
+        st.markdown(texto)
+    else:
+        st.markdown(f"- {texto}")
+
+
 def _render_relatorio_completo(relatorio, vm):
     st.caption("Relatório baseado na análise completa da conversa")
     st.markdown(
@@ -409,67 +567,97 @@ def _render_relatorio_completo(relatorio, vm):
 <div class="dpia-report-card" style="border: 2px solid {vm["risco_cor"]}; border-left: 8px solid {vm["risco_cor"]}; padding: 18px;">
   <strong style="font-size: 1.35rem; color: {vm["risco_cor"]}; letter-spacing: 0.02em;">{vm["risco_visual"]}</strong>
 </div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;"><strong>📊 Diagnóstico</strong><br>{relatorio.get("diagnostico", "")}</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;"><strong>Com base no histórico da empresa...</strong><br>{vm["frase_historico"]}</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;"><strong>⚖️ Risco jurídico</strong><br>{relatorio.get("risco_juridico", "")}</div>
 """,
         unsafe_allow_html=True,
     )
-    _render_comparativo_scores_risco(relatorio)
-    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="dpia-report-card" style="border: 1px solid #334155;"><strong>💰 Impacto</strong></div>', unsafe_allow_html=True)
-    if vm["impacto_financeiro_estimado"] > 0:
+
+    dados_pdf = _build_dados_pdf_relatorio(relatorio, vm)
+    try:
+        pdf_bytes = gerar_pdf_relatorio(dados_pdf)
+        st.download_button(
+            label="📄 Baixar Relatório em PDF",
+            data=pdf_bytes,
+            file_name="relatorio_risco_trabalhista.pdf",
+            mime="application/pdf",
+            type="primary",
+            key="download_relatorio_completo_pdf",
+        )
+    except FileNotFoundError as err:
+        st.warning(f"Exportação PDF indisponível: {err}")
+    except Exception as err:
+        st.error(f"Não foi possível gerar o PDF: {err}")
+
+    with st.expander("📊 Diagnóstico Detalhado", expanded=True):
+        st.markdown(str(relatorio.get("diagnostico") or "—"))
+        st.markdown("**Com base no histórico da empresa**")
+        st.markdown(vm["frase_historico"])
+        st.markdown("**Risco jurídico**")
+        st.markdown(str(relatorio.get("risco_juridico") or "—"))
+
+    impacto_val = float(vm.get("impacto_financeiro_estimado") or 0)
+    impacto_titulo = _format_reais_br(impacto_val) if impacto_val > 0 else "a estimar"
+    with st.expander(f"💰 Impacto Financeiro Estimado: {impacto_titulo}"):
+        impacto_md = str(vm.get("impacto_financeiro_detalhe_md") or "").strip()
+        if impacto_md:
+            st.markdown(impacto_md)
+        elif impacto_val > 0:
+            st.markdown(f"**Total consolidado:** {_format_reais_br(impacto_val)}")
+            st.caption(
+                "Estimativa com base nos fatos validados (salário, tempo de serviço e verbas identificadas)."
+            )
+        else:
+            render_barra_impacto_financeiro(vm["score_risco"])
+            st.caption("Provisionamento quantitativo indisponível; exibindo faixa qualitativa pelo score.")
+        impacto_txt = str(relatorio.get("impacto_financeiro") or "").strip()
+        if impacto_txt:
+            st.markdown("---")
+            st.markdown("**Contexto narrativo**")
+            st.markdown(impacto_txt)
+
+    with st.expander("📌 Plano de Ação Recomendado"):
+        if vm.get("checklist"):
+            for item in vm["checklist"]:
+                st.markdown(f"- ✔ {item}")
+        else:
+            st.caption("Nenhum item de checklist registrado.")
+        if vm.get("proximos_passos"):
+            st.markdown("**Próximos passos**")
+            for item in vm["proximos_passos"]:
+                st.markdown(f"- {item}")
+        if relatorio.get("decisao_recomendada"):
+            st.markdown("**Decisão recomendada**")
+            st.markdown(str(relatorio.get("decisao_recomendada")))
+        st.markdown(f"**👉 Recomendação final:** {vm['recomendacao_final']}")
+
+    with st.expander("🧠 Estratégia Jurídica"):
+        st.markdown(str(relatorio.get("estrategia") or "—"))
+        st.markdown("---")
         st.markdown(
-            f"**Impacto Potencial Estimado:** {_format_reais_br(vm['impacto_financeiro_estimado'])}"
+            _html_bloco_simulacao_decisao(vm["simulacao"], vm["nivel_risco"]),
+            unsafe_allow_html=True,
         )
-        st.caption(
-            "Estimativa baseada em salário, tempo de serviço e nível de risco. "
-            "Não substitui cálculo detalhado de verbas."
-        )
-    else:
-        render_barra_impacto_financeiro(vm["score_risco"])
-    st.markdown(
-        f"""
-<div class="dpia-report-card" style="border: 1px solid #334155; border-top: 0; margin-top:-8px;">
-  {relatorio.get("impacto_financeiro", "")}
-</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;">
-  <strong>📌 Ação</strong>
-  <ul>{vm["checklist_html"]}</ul>
-</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;"><strong>🧠 Estratégia</strong><br>{relatorio.get("estrategia", "")}</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;">
-  <strong>Base legal (simplificada)</strong>
-  <ul>{vm["base_legal_html"]}</ul>
-</div>
-<div style="height:16px;"></div>
-{_html_bloco_simulacao_decisao(vm["simulacao"], vm["nivel_risco"])}
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155; border-left: 6px solid #f59e0b;">
-  <strong>Decisão recomendada</strong><br>{relatorio.get("decisao_recomendada", "")}
-</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155;">
-  <strong>Próximos passos recomendados</strong>
-  <ul>{vm["proximos_passos_html"]}</ul>
-</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155; border-left: 6px solid #334155;">
-  Este diagnóstico segue princípios da CLT e prática jurídica comum no Brasil.
-</div>
-<div style="height:16px;"></div>
-<div class="dpia-report-card" style="border: 1px solid #334155; border-left: 6px solid #22c55e;">
-  <strong>👉 Recomendação final:</strong> {vm["recomendacao_final"]}
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+
+    with st.expander("⚖️ Base Legal Aplicável"):
+        itens_legal = vm.get("base_legal") or relatorio.get("base_legal_simplificada") or []
+        if itens_legal:
+            for item in itens_legal:
+                st.markdown(f"- {item}")
+        else:
+            st.caption("Base legal simplificada não informada neste relatório.")
+
+    with st.expander("📈 Entenda como o Score foi calculado"):
+        _render_resumo_scores(relatorio)
+        se2 = vm.get("score_engine_v2") or {}
+        linhas = _linhas_racional_score_sem_impacto(se2.get("racional") or [])
+        if linhas:
+            st.markdown("**Racional detalhado**")
+            for linha in linhas:
+                _render_linha_racional_score(linha)
+        else:
+            st.caption("Racional do score v2 não disponível para este caso.")
+
+    st.caption("Este diagnóstico segue princípios da CLT e prática jurídica comum no Brasil.")
+
 
 
 def _render_painel_controle(relatorio, vm, case_id):
