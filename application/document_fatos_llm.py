@@ -39,6 +39,9 @@ PROMPT_EXTRACAO_FATOS = """Você é um assistente de análise jurídica especial
 Sua ÚNICA tarefa é ler o texto abaixo e extrair os seguintes campos, quando houver indício claro no documento.
 Se um campo não estiver presente ou for ambíguo, retorne exatamente a string "Não encontrado" (para campos de texto) ou lista vazia [] (apenas para evidencias_mencionadas).
 
+Para valor_salario, use formato brasileiro quando houver valor (ex.: "R$ 2.800,00" ou "2800").
+Se houver data_admissao e data_demissao válidas, calcule também tempo_empresa_meses como número inteiro (meses de vínculo).
+
 NÃO invente dados. NÃO complete lacunas com suposições.
 As evidências devem ser lista de strings curtas descrevendo provas ou documentos citados no texto.
 
@@ -57,8 +60,11 @@ JSON obrigatório (todas as chaves devem existir):
   "valor_salario": "...",
   "tipo_contrato": "...",
   "motivo_reclamacao": "...",
-  "evidencias_mencionadas": []
+  "evidencias_mencionadas": [],
+  "tempo_empresa_meses": null
 }}
+
+tempo_empresa_meses: inteiro (ex.: 52) ou null se não for possível calcular pelas datas.
 """
 
 
@@ -153,20 +159,11 @@ def formatar_fatos_para_contexto_llm(fatos: dict[str, Any]) -> str:
 
 
 def _parse_salario_para_float(valor_bruto: Any) -> float | None:
+    from application.parsing_br import parse_moeda_br
+
     if _eh_nao_encontrado(valor_bruto):
         return None
-    s = str(valor_bruto).strip()
-    s = re.sub(r"\s+", "", s.replace("R$", "").replace("r$", ""))
-    if not s:
-        return None
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    return parse_moeda_br(valor_bruto)
 
 
 def aplicar_fatos_documento_na_sessao(sessao: Any, fatos: dict[str, Any]) -> None:
@@ -196,6 +193,17 @@ def aplicar_fatos_documento_na_sessao(sessao: Any, fatos: dict[str, Any]) -> Non
         atual = sessao.obter_dados().get("salario")
         if atual is None or atual == "":
             sessao.atualizar_dados({"salario": parsed_sal})
+
+    tempo_m = fatos.get("tempo_empresa_meses")
+    if tempo_m is not None and not _eh_nao_encontrado(tempo_m):
+        try:
+            meses_ia = int(float(str(tempo_m).strip().replace(",", ".")))
+            if meses_ia > 0:
+                atual_m = sessao.obter_dados().get("tempo_empresa_meses")
+                if atual_m is None or atual_m == "" or atual_m == 0:
+                    sessao.atualizar_dados({"tempo_empresa_meses": meses_ia})
+        except (TypeError, ValueError):
+            pass
 
     if not _eh_nao_encontrado(fatos.get("tipo_contrato")):
         sessao.atualizar_dados({"tipo_contrato_documento_ia": fatos["tipo_contrato"]})

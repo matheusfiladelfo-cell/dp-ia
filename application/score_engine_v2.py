@@ -7,8 +7,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date
 
+from application.parsing_br import (
+    meses_entre_datas,
+    parse_data_br,
+    parse_moeda_br,
+    parse_tempo_meses_fatos,
+)
 from banco import listar_fatos_validados, obter_mapa_fatos_validados
 
 NAO_ENCONTRADO = frozenset(
@@ -40,22 +46,7 @@ def _eh_vazio_ou_nao_encontrado(val: str) -> bool:
 def _parse_data_bruta(val: str | None) -> date | None:
     if val is None or _eh_vazio_ou_nao_encontrado(str(val)):
         return None
-    s = str(val).strip()
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(s[:19], fmt).date()
-        except ValueError:
-            continue
-    m = re.match(r"^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})", s)
-    if m:
-        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if y < 100:
-            y += 2000
-        try:
-            return date(y, mo, d)
-        except ValueError:
-            return None
-    return None
+    return parse_data_br(str(val))
 
 
 def modificador_por_tipo_contrato(tipo_contrato: str) -> tuple[int, str | None]:
@@ -149,34 +140,21 @@ def _conta_evidencias(evidencias_valor: str) -> int:
 
 
 def _parse_salario_float(valor: str | None) -> float | None:
-    if valor is None:
+    if valor is None or _eh_vazio_ou_nao_encontrado(str(valor)):
         return None
-    s = str(valor).strip()
-    if _eh_vazio_ou_nao_encontrado(s):
-        return None
-    s = re.sub(r"\s+", "", s.replace("R$", "").replace("r$", ""))
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        v = float(s)
-    except (TypeError, ValueError):
-        return None
-    if v <= 0:
-        return None
-    return v
+    return parse_moeda_br(valor)
+
+
+def _obter_salario_de_fatos(fatos: dict) -> float | None:
+    for chave in ("valor_salario", "salario", "salario_base", "salario_bruto"):
+        v = parse_moeda_br(fatos.get(chave))
+        if v is not None:
+            return v
+    return None
 
 
 def _meses_servico_aprox(data_admissao: str, data_demissao: str) -> int:
-    adm = _parse_data_bruta(data_admissao)
-    if adm is None:
-        return 0
-    dem = _parse_data_bruta(data_demissao) or date.today()
-    if dem < adm:
-        return 0
-    dias = max(0, (dem - adm).days)
-    return max(1, int(round(dias / 30.44)))
+    return meses_entre_datas(data_admissao, data_demissao)
 
 
 def obter_fator_ajuste_dinamico(motivo_reclamacao: str) -> tuple[float, str]:
@@ -191,23 +169,20 @@ def obter_fator_ajuste_dinamico(motivo_reclamacao: str) -> tuple[float, str]:
 
 
 def calcular_impacto_financeiro_v2(fatos: dict, score_final: int) -> tuple[float, float, str]:
-    salario = _parse_salario_float(fatos.get("valor_salario"))
-    if salario is None:
-        return 0.0, 0.0, "Dados insuficientes"
-    meses_servico = _meses_servico_aprox(
-        fatos.get("data_admissao", ""),
-        fatos.get("data_demissao", ""),
-    )
-    if meses_servico <= 0:
-        return 0.0, 0.0, "Dados insuficientes"
     try:
+        salario = _obter_salario_de_fatos(fatos)
+        if salario is None:
+            return 0.0, 0.0, "Dados insuficientes"
+        meses_servico = parse_tempo_meses_fatos(fatos)
+        if meses_servico <= 0:
+            return 0.0, 0.0, "Dados insuficientes"
         risco = max(0.0, min(1.0, float(score_final) / 100.0))
+        fator_ajuste, categoria = obter_fator_ajuste_dinamico(fatos.get("motivo_reclamacao", ""))
+        base_calculo = float(salario) * float(meses_servico)
+        impacto_estimado = base_calculo * risco * float(fator_ajuste)
+        return round(max(0.0, impacto_estimado), 2), float(fator_ajuste), categoria
     except (TypeError, ValueError):
-        risco = 0.0
-    fator_ajuste, categoria = obter_fator_ajuste_dinamico(fatos.get("motivo_reclamacao", ""))
-    base_calculo = float(salario) * float(meses_servico)
-    impacto_estimado = base_calculo * risco * float(fator_ajuste)
-    return round(max(0.0, impacto_estimado), 2), float(fator_ajuste), categoria
+        return 0.0, 0.0, "Dados insuficientes"
 
 
 def _texto_tem_subordinacao(txt: str) -> bool:
