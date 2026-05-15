@@ -39,6 +39,7 @@ def executar_cenario(fatos: dict) -> dict:
         impacto,
         fator_ajuste,
         categoria_fator,
+        impacto_md,
     ) = calcular_score_v2_1(fatos)
     return {
         "disponivel": True,
@@ -49,6 +50,7 @@ def executar_cenario(fatos: dict) -> dict:
         "impacto_financeiro_estimado": impacto,
         "fator_ajuste_impacto": fator_ajuste,
         "categoria_fator_impacto": categoria_fator,
+        "impacto_financeiro_detalhe_md": impacto_md,
     }
 
 

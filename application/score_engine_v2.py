@@ -9,6 +9,11 @@ import re
 import unicodedata
 from datetime import date
 
+from application.calculadora_clt import (
+    estimar_passivo_detalhado,
+    fatos_dict_para_textos,
+    formatar_passivo_markdown,
+)
 from application.parsing_br import (
     meses_entre_datas,
     parse_data_br,
@@ -168,21 +173,33 @@ def obter_fator_ajuste_dinamico(motivo_reclamacao: str) -> tuple[float, str]:
     return FATOR_AJUSTE_IMPACTO_FINANCEIRO, "Risco Geral"
 
 
-def calcular_impacto_financeiro_v2(fatos: dict, score_final: int) -> tuple[float, float, str]:
+def calcular_impacto_financeiro_v2(
+    fatos: dict, score_final: int
+) -> tuple[float, float, str, str]:
+    """
+    Retorna (total_estimado, fator_ajuste, categoria_risco, markdown_detalhado).
+    markdown vazio quando não há base para cálculo.
+    """
     try:
         salario = _obter_salario_de_fatos(fatos)
         if salario is None:
-            return 0.0, 0.0, "Dados insuficientes"
+            return 0.0, 0.0, "Dados insuficientes", ""
         meses_servico = parse_tempo_meses_fatos(fatos)
         if meses_servico <= 0:
-            return 0.0, 0.0, "Dados insuficientes"
-        risco = max(0.0, min(1.0, float(score_final) / 100.0))
+            return 0.0, 0.0, "Dados insuficientes", ""
+
         fator_ajuste, categoria = obter_fator_ajuste_dinamico(fatos.get("motivo_reclamacao", ""))
-        base_calculo = float(salario) * float(meses_servico)
-        impacto_estimado = base_calculo * risco * float(fator_ajuste)
-        return round(max(0.0, impacto_estimado), 2), float(fator_ajuste), categoria
+        textos = fatos_dict_para_textos(fatos)
+        detalhe = estimar_passivo_detalhado(textos, float(salario), int(meses_servico))
+        total = float(detalhe.get("total") or 0)
+
+        if total <= 0:
+            return 0.0, float(fator_ajuste), categoria, ""
+
+        markdown = formatar_passivo_markdown(detalhe)
+        return round(total, 2), float(fator_ajuste), categoria, markdown
     except (TypeError, ValueError):
-        return 0.0, 0.0, "Dados insuficientes"
+        return 0.0, 0.0, "Dados insuficientes", ""
 
 
 def _texto_tem_subordinacao(txt: str) -> bool:
@@ -293,15 +310,22 @@ def calcular_score_v2_1(fatos: dict) -> tuple[int, str, list[str], float, float,
     racional.append(
         f"Total base: {int(round(score_base))} pts; após ponderações: {round(score_ponderado, 2)} pts → score final: {score_final}/100."
     )
-    impacto_estimado, fator_ajuste, categoria_fator = calcular_impacto_financeiro_v2(fatos, score_final)
-    if impacto_estimado > 0:
+    impacto_estimado, fator_ajuste, categoria_fator, impacto_md = calcular_impacto_financeiro_v2(
+        fatos, score_final
+    )
+    if impacto_estimado > 0 and impacto_md:
+        racional.append(impacto_md)
         racional.append(
-            f"Cálculo de Impacto Financeiro: Fator de ajuste de {int(round(fator_ajuste * 100))}% "
-            f"aplicado devido ao risco de '{categoria_fator}'."
+            f"Categoria de risco considerada no contexto: '{categoria_fator}'."
+        )
+    elif impacto_estimado > 0:
+        racional.append(
+            f"Cálculo de Impacto Financeiro: total estimado R$ {impacto_estimado:,.2f}."
         )
     else:
         racional.append(
-            "Cálculo de Impacto Financeiro: não foi possível estimar por falta de salário e/ou período de serviço válidos."
+            "Cálculo de Impacto Financeiro: não foi possível estimar por falta de salário, "
+            "período de serviço válidos ou palavras-chave de verbas nos fatos validados."
         )
     return (
         score_final,
@@ -311,6 +335,7 @@ def calcular_score_v2_1(fatos: dict) -> tuple[int, str, list[str], float, float,
         impacto_estimado,
         fator_ajuste,
         categoria_fator,
+        impacto_md,
     )
 
 
@@ -349,6 +374,7 @@ def executar_score_engine_v2(analise_id: int) -> dict:
         impacto_estimado,
         fator_ajuste,
         categoria_fator,
+        impacto_md,
     ) = calcular_score_v2_1(fatos)
 
     return {
@@ -361,4 +387,5 @@ def executar_score_engine_v2(analise_id: int) -> dict:
         "impacto_financeiro_estimado": impacto_estimado,
         "fator_ajuste_impacto": fator_ajuste,
         "categoria_fator_impacto": categoria_fator,
+        "impacto_financeiro_detalhe_md": impacto_md,
     }

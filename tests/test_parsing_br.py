@@ -34,13 +34,13 @@ def test_impacto_financeiro_com_salario_brl():
         "data_admissao": "10/03/2023",
         "data_demissao": "01/05/2024",
         "valor_salario": "R$ 2.800,00",
-        "motivo_reclamacao": "Verbas rescisórias",
+        "motivo_reclamacao": "Verbas rescisórias e FGTS não depositado",
         "evidencias_mencionadas": "",
     }
-    impacto, _, _ = calcular_impacto_financeiro_v2(fatos, 50)
+    impacto, _, _, md = calcular_impacto_financeiro_v2(fatos, 50)
     assert impacto > 0
 
-    _, _, racional, _, _, _, _ = calcular_score_v2_1(fatos)
+    _, _, racional, _, _, _, _, _ = calcular_score_v2_1(fatos)
     assert not any(
         "não foi possível estimar" in str(l).lower() for l in racional
     )
