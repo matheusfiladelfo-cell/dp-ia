@@ -12,6 +12,7 @@ from banco import (
     criar_tabelas,
     obter_email_usuario,
     obter_historico_empresa,
+    rotulo_tipo_caso_para_exibicao,
     obter_uso_usuario,
     incrementar_uso,
     registrar_admin_audit,
@@ -812,9 +813,20 @@ if area_principal == "Buscar Casos":
     hist = obter_historico_empresa(empresa_id, limite=30, criado_por_usuario_id=filtro_hist)
     st.markdown("#### Histórico recente")
     st.write(hist.get("resumo") or "Sem análises registradas.")
-    tipos = hist.get("tipos_frequentes") or []
+    tipos = hist.get("tipos_frequentes_exibicao") or hist.get("tipos_frequentes") or []
     if tipos:
-        st.caption("Tipos frequentes: " + ", ".join(str(t) for t in tipos[:5]))
+        linhas_tipos = []
+        for par in tipos[:5]:
+            if isinstance(par, (list, tuple)) and len(par) >= 2:
+                tipo_key, cnt = par[0], par[1]
+                lab = (
+                    tipo_key
+                    if hist.get("tipos_frequentes_exibicao")
+                    else rotulo_tipo_caso_para_exibicao(tipo_key)
+                )
+                linhas_tipos.append(f"{lab} ({cnt})")
+        if linhas_tipos:
+            st.caption("Tipos frequentes: " + "; ".join(linhas_tipos))
     render_footer()
     st.stop()
 

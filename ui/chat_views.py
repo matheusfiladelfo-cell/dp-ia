@@ -2,7 +2,7 @@ import json
 
 import streamlit as st
 from datetime import datetime
-from banco import obter_email_usuario, registrar_evento_produto
+from banco import obter_email_usuario, registrar_evento_produto, rotulo_tipo_caso_para_exibicao
 
 from application.document_fatos_llm import (
     CHAVES_JSON,
@@ -291,6 +291,43 @@ def calcular_reducao_risco(risco_original: str, acoes_concluidas: int, total_aco
     return orig
 
 
+def _substituir_identificadores_tipo_caso_no_texto(texto: str) -> str:
+    """Remove eco de valores internos de tipo_caso em textos antigos de resumo."""
+    t = str(texto or "")
+    if not t.strip():
+        return ""
+    for tok in (
+        "consultoria_conversa",
+        "validacao_fatos_documento",
+        "duvida_geral",
+        "pedido_demissao",
+        "acidente_trabalho",
+        "terceirizacao",
+        "nao_classificado",
+        "não_classificado",
+    ):
+        if tok in t:
+            t = t.replace(tok, rotulo_tipo_caso_para_exibicao(tok))
+    return t
+
+
+def _frase_historico_empresa_final(historico: dict) -> str:
+    """Texto único para exibir sob o rótulo Histórico da empresa (sem título duplicado)."""
+    hist = historico or {}
+    total_hist = int(hist.get("total_ocorrencias") or 0)
+    bruto = str(hist.get("resumo") or "").strip()
+
+    corpo = bruto
+    for prefix in ("Com base no histórico da empresa,", "Com base no histórico da empresa"):
+        if corpo.lower().startswith(prefix.lower()):
+            corpo = corpo[len(prefix) :].lstrip(" ,.;:").strip()
+            break
+    corpo = _substituir_identificadores_tipo_caso_no_texto(corpo)
+    if not corpo and total_hist > 0:
+        corpo = f"A empresa possui {total_hist} análise(s) anterior(es) registradas no sistema."
+    return corpo.strip()
+
+
 def _html_reducao_risco_plano(risco_atual: str, risco_projetado: str, concluidas: int, total: int) -> str:
     def _norm(r):
         x = str(r or "").strip().upper().replace("MEDIO", "MÉDIO")
@@ -341,10 +378,8 @@ def _build_relatorio_view_model(relatorio):
     proximos_passos = relatorio.get("proximos_passos_recomendados") or []
     proximos_passos_html = "".join(f"<li>{item}</li>" for item in proximos_passos)
     historico = relatorio.get("historico_empresa") or {}
-    frase_historico = str(
-        historico.get("resumo")
-        or "Com base no histórico da empresa, não há dados suficientes para padrão recorrente."
-    )
+    frase_historico = _frase_historico_empresa_final(historico)
+    mostrar_historico_empresa = bool(frase_historico)
     recomendacao_final = str(relatorio.get("decisao_recomendada") or "").strip()
     if not recomendacao_final:
         recomendacao_final = "Validar documentos antes de decidir."
@@ -377,6 +412,7 @@ def _build_relatorio_view_model(relatorio):
         "proximos_passos": proximos_passos,
         "proximos_passos_html": proximos_passos_html,
         "frase_historico": frase_historico,
+        "mostrar_historico_empresa": mostrar_historico_empresa,
         "recomendacao_final": recomendacao_final,
         "score_risco": int((relatorio.get("fluxo_consulta") or {}).get("pontuacao") or 0),
         "impacto_financeiro_estimado": impacto_estimado_val,
@@ -489,13 +525,18 @@ def _formatar_score_para_pdf(relatorio: dict, vm: dict) -> str:
 def _build_dados_pdf_relatorio(relatorio: dict, vm: dict) -> dict:
     diag_partes = [
         str(relatorio.get("diagnostico") or "—"),
-        "",
-        "Com base no histórico da empresa:",
-        str(vm.get("frase_historico") or "—"),
+    ]
+    if vm.get("mostrar_historico_empresa"):
+        diag_partes.extend(
+            ["", "**Histórico da empresa:**", str(vm.get("frase_historico") or "—")]
+        )
+    diag_partes.extend(
+        [
         "",
         "Risco jurídico:",
         str(relatorio.get("risco_juridico") or "—"),
-    ]
+        ]
+    )
 
     acao_linhas: list[str] = []
     for item in vm.get("checklist") or []:
@@ -589,8 +630,9 @@ def _render_relatorio_completo(relatorio, vm):
 
     with st.expander("📊 Diagnóstico Detalhado", expanded=True):
         st.markdown(str(relatorio.get("diagnostico") or "—"))
-        st.markdown("**Com base no histórico da empresa**")
-        st.markdown(vm["frase_historico"])
+        if vm.get("mostrar_historico_empresa"):
+            st.markdown("**Histórico da empresa**")
+            st.markdown(vm["frase_historico"])
         st.markdown("**Risco jurídico**")
         st.markdown(str(relatorio.get("risco_juridico") or "—"))
 

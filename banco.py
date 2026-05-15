@@ -2901,6 +2901,40 @@ def upsert_funcionarios_integracao_lote(empresa_id, employees: list) -> int:
     return n
 
 
+def rotulo_tipo_caso_para_exibicao(tipo_raw: object) -> str:
+    """Converte identificador interno gravado em analises.tipo_caso em texto para o usuário final."""
+    t = str(tipo_raw or "").strip().lower().replace("-", "_")
+    if not t:
+        return "Registros de análises trabalhistas"
+    mapa = {
+        "consultoria_conversa": "Análise de Risco Trabalhista",
+        "validacao_fatos_documento": "Validação de fatos em documento anexado",
+        "duvida_geral": "Dúvidas gerais trabalhistas",
+        "rescisao": "Rescisão ou desligamento",
+        "pedido_demissao": "Pedido de demissão",
+        "terceirizacao": "Terceirização",
+        "assedio": "Assédio moral ou sexual",
+        "jornada": "Jornada de trabalho ou horas extras",
+        "afastamento": "Afastamento ou licença",
+        "acidente_trabalho": "Acidente de trabalho ou saúde ocupacional",
+        "atestado": "Afastamentos médicos ou atestados",
+        "burnout": "Saúde mental e burnout",
+        "salario": "Salários, adicionais e verbas rescisórias",
+        # Evita eco de nomes falsos vindos da classificação
+        "não_classificado": "Registros diversos trabalhistas",
+        "nao_classificado": "Registros diversos trabalhistas",
+        "não classificado": "Registros diversos trabalhistas",
+    }
+    if t in mapa:
+        return mapa[t]
+    # valores legados já em português (sem snake_case típico)
+    if "_" not in t:
+        cand = str(tipo_raw or "").strip()
+        if cand and cand != TIPO_ANALISE_STUB_VALIDACAO_FATOS:
+            return cand[:120] + ("..." if len(cand) > 120 else "")
+    return "Análises trabalhistas registradas"
+
+
 def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
     conn = conectar()
     cursor = conn.cursor()
@@ -2942,7 +2976,7 @@ def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
             "total_ocorrencias": 0,
             "tipos_frequentes": [],
             "riscos_frequentes": [],
-            "resumo": "Com base no histórico da empresa, ainda não há ocorrências registradas.",
+            "resumo": "",
         }
 
     contagem_tipos = {}
@@ -2955,12 +2989,29 @@ def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
 
     tipos_frequentes = sorted(contagem_tipos.items(), key=lambda x: x[1], reverse=True)
     riscos_frequentes = sorted(contagem_riscos.items(), key=lambda x: x[1], reverse=True)
+    n = len(rows)
     tipo_principal = tipos_frequentes[0][0]
-    resumo = f"Com base no histórico da empresa, você já teve ocorrências de {tipo_principal} anteriormente."
+    qtd_principal = int(tipos_frequentes[0][1])
+    lab = rotulo_tipo_caso_para_exibicao(tipo_principal)
+    if len(tipos_frequentes) == 1:
+        resumo = f"A empresa possui {n} registro(s) de {lab} no sistema."
+    elif qtd_principal == n:
+        resumo = f"A empresa possui {n} registro(s) de {lab} no sistema."
+    else:
+        resumo = (
+            f"A empresa possui {n} análise(s) anteriores registradas no sistema "
+            f"({qtd_principal} relacionadas a {lab})."
+        )
+
+    tipos_frequentes_exibicao = [
+        (rotulo_tipo_caso_para_exibicao(tipo), int(qtd))
+        for tipo, qtd in tipos_frequentes
+    ]
 
     return {
         "total_ocorrencias": len(rows),
         "tipos_frequentes": tipos_frequentes,
+        "tipos_frequentes_exibicao": tipos_frequentes_exibicao,
         "riscos_frequentes": riscos_frequentes,
         "resumo": resumo,
     }

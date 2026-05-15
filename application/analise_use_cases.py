@@ -331,7 +331,7 @@ JSON obrigatório:
             "total_ocorrencias": 0,
             "tipos_frequentes": [],
             "riscos_frequentes": [],
-            "resumo": "Com base no histórico da empresa, não foi possível carregar ocorrências anteriores.",
+            "resumo": "",
         }
     )
 
