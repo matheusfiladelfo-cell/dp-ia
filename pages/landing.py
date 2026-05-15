@@ -7,7 +7,9 @@ import streamlit as st
 
 from banco import criar_tabelas, salvar_lead_demonstracao
 from config_pricing import STARTER, PRO, BUSINESS
+from ui.prelogin_nav import render_prelogin_sidebar_nav
 from ui.theme import apply_global_theme
+from ui.utils import carregar_css_customizado
 
 # Número WhatsApp (apenas dígitos, ex.: 5511987654321). Sobrescreva com MP_WHATSAPP_PHONE.
 _MP_WHATSAPP_DEFAULT = "5514996867332"
@@ -42,7 +44,11 @@ def _whatsapp_strategic_block(button_key: str, show_urgency: bool = True):
 
 st.set_page_config(page_title="DP-IA | Landing", layout="wide")
 apply_global_theme()
+carregar_css_customizado()
 criar_tabelas()
+
+if not st.session_state.get("user_id"):
+    render_prelogin_sidebar_nav("pages/landing.py")
 
 if "landing_lead_saved" not in st.session_state:
     st.session_state.landing_lead_saved = False

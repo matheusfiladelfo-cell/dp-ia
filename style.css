@@ -4,6 +4,21 @@
     padding-bottom: 80px !important;
 }
 
+/* Oculta navegação multipage nativa do Streamlit (app / landing / dashboard) */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNav"] ul,
+[data-testid="stSidebarNavItems"],
+[data-testid="stSidebarNavLink"] {
+    display: none !important;
+    height: 0 !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    visibility: hidden !important;
+}
+
 /* Sidebar: hierarquia leve (estilo Manus — mais respiro, menos divisórias) */
 [data-testid="stSidebar"] {
     padding-top: 0.5rem;
@@ -34,10 +49,11 @@
     margin-bottom: 0.35rem;
 }
 
-/* Oculta divisórias nativas que poluem o visual */
+/* Oculta divisórias nativas que poluem o visual (pré-login e área logada) */
 [data-testid="stSidebar"] hr,
 [data-testid="stSidebar"] [data-testid="stDivider"],
-[data-testid="stSidebar"] .stDivider {
+[data-testid="stSidebar"] .stDivider,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] hr {
     display: none !important;
     border: none !important;
     margin: 0 !important;

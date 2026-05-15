@@ -6,7 +6,9 @@ import json
 
 from banco import criar_tabelas, listar_empresas, usuario_pode_acessar_plataforma
 from plano_service import get_plano_usuario
+from ui.prelogin_nav import render_prelogin_sidebar_nav
 from ui.theme import apply_global_theme
+from ui.utils import carregar_css_customizado
 from ui.empty_states import (
     render_empty_state_sem_empresa,
     render_empty_state_sem_analises,
@@ -21,6 +23,7 @@ criar_tabelas()
 
 st.set_page_config(page_title="Dashboard DP-IA", layout="wide")
 apply_global_theme()
+carregar_css_customizado()
 
 st.markdown(
     """
@@ -105,6 +108,7 @@ st.markdown(
 usuario_id = st.session_state.get("user_id")
 
 if not usuario_id:
+    render_prelogin_sidebar_nav("pages/dashboard.py")
     st.warning("Faça login para acessar o Dashboard Executivo.")
     st.stop()
 

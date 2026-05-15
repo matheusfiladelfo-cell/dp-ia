@@ -93,6 +93,8 @@ from ui.dashboard_corporativo_views import render_dashboard_corporativo
 from ui.equipe_views import render_gestao_equipe
 from ui.integracoes_views import render_integracoes
 from ui.permissoes_views import render_resumo_permissoes
+from ui.nav_styles import MP_OPTION_MENU_STYLES
+from ui.prelogin_nav import render_prelogin_sidebar_nav
 from ui.utils import carregar_css_customizado
 from superadmin_panel import render_superadmin_panel
 from ui.onboarding_views import (
@@ -411,6 +413,8 @@ carregar_css_customizado()
 # LOGIN
 # =========================
 if "user_id" not in st.session_state:
+    render_prelogin_sidebar_nav("app.py")
+
     page_reset = _query_param_scalar("page").lower()
     token_redef = _query_param_scalar("token")
     if page_reset == "reset_password" and token_redef:
@@ -583,37 +587,6 @@ paginas_validas = nav_opts + NAV_SECUNDARIA + (
 if st.session_state.get("pagina_ativa") not in paginas_validas:
     st.session_state["pagina_ativa"] = "Nova Análise"
 
-_MP_NAV_MENU_STYLES = {
-    "container": {
-        "padding": "0.25rem 0 0.5rem 0!important",
-        "background-color": "transparent",
-    },
-    "icon": {
-        "color": "#94a3b8",
-        "font-size": "1.05rem",
-        "opacity": "0.88",
-    },
-    "nav-link": {
-        "font-size": "0.92rem",
-        "text-align": "left",
-        "margin": "0.2rem 0",
-        "padding": "0.55rem 0.75rem",
-        "border-radius": "12px",
-        "color": "#cbd5e1",
-        "background-color": "transparent",
-        "--hover-color": "rgba(37, 99, 235, 0.14)",
-    },
-    "nav-link-selected": {
-        "background-color": "rgba(37, 99, 235, 0.22)",
-        "color": "#f8fafc",
-        "font-weight": "600",
-        "border": "none",
-        "border-radius": "12px",
-        "padding": "0.55rem 0.75rem",
-        "box-shadow": "inset 0 0 0 1px rgba(96, 165, 250, 0.22)",
-    },
-}
-
 with st.sidebar:
     if usuario_e_admin and st.session_state.get("pagina_ativa") == "SuperAdminPanel":
         st.info("Modo Super Admin ativo")
@@ -638,7 +611,7 @@ with st.sidebar:
             menu_icon="cast",
             default_index=idx_nav,
             key="menu_navegacao_mp",
-            styles=_MP_NAV_MENU_STYLES,
+            styles=MP_OPTION_MENU_STYLES,
         )
         st.session_state["pagina_ativa"] = area_principal
 
