@@ -1490,6 +1490,13 @@ def usuario_eh_admin(usuario_id) -> bool:
     return bool(row and int(row[0] or 0) == 1)
 
 
+def is_usuario_admin(usuario_id) -> bool:
+    """True se o usuário tem is_admin=1 na tabela usuarios."""
+    if usuario_id is None:
+        return False
+    return usuario_eh_admin(usuario_id)
+
+
 def promover_admin_por_email_se_necessario(usuario_id, email: str | None) -> None:
     """
     Se ADMIN_MASTER_EMAIL estiver configurado e o login corresponder,
@@ -2991,6 +2998,60 @@ def salvar_feedback_resultado_analise(
 # =========================
 # ADMIN (somente leitura / export)
 # =========================
+def _sql_ts_gte_days_ago(col_expr: str, days: int) -> str:
+    """Predicado: coluna de data/hora nos últimos N dias (SQLite ou Postgres)."""
+    n = int(days)
+    if IS_POSTGRES:
+        return f"CAST({col_expr} AS timestamp) >= NOW() - INTERVAL '{n} days'"
+    return f"date({col_expr}) >= date('now', '-{n} days')"
+
+
+def _sql_ts_in_range_days_ago(col_expr: str, start_days: int, end_days: int) -> str:
+    """Janela [now-start_days, now-end_days) em dias."""
+    s, e = int(start_days), int(end_days)
+    if IS_POSTGRES:
+        return (
+            f"CAST({col_expr} AS timestamp) >= NOW() - INTERVAL '{s} days' "
+            f"AND CAST({col_expr} AS timestamp) < NOW() - INTERVAL '{e} days'"
+        )
+    return (
+        f"date({col_expr}) >= date('now', '-{s} days') "
+        f"AND date({col_expr}) < date('now', '-{e} days')"
+    )
+
+
+def _sql_date_is_today(col_expr: str) -> str:
+    if IS_POSTGRES:
+        return f"CAST({col_expr} AS date) = CURRENT_DATE"
+    return f"date({col_expr}) = date('now')"
+
+
+def _sql_ym_equals(col_expr: str) -> str:
+    """Comparar ano-mês (placeholder ? = YYYY-MM)."""
+    if IS_POSTGRES:
+        return f"to_char(CAST({col_expr} AS timestamp), 'YYYY-MM') = ?"
+    return f"strftime('%Y-%m', {col_expr}) = ?"
+
+
+def _sql_day_expr(col_expr: str) -> str:
+    """Truncar para dia (SELECT / GROUP BY)."""
+    if IS_POSTGRES:
+        return f"CAST({col_expr} AS date)"
+    return f"date({col_expr})"
+
+
+def _sql_ym_expr(col_expr: str) -> str:
+    if IS_POSTGRES:
+        return f"to_char(CAST({col_expr} AS timestamp), 'YYYY-MM')"
+    return f"strftime('%Y-%m', {col_expr})"
+
+
+def _sql_order_ts_desc(col_expr: str) -> str:
+    if IS_POSTGRES:
+        return f"CAST({col_expr} AS timestamp) DESC"
+    return f"datetime({col_expr}) DESC"
+
+
 def admin_count_usuarios():
     conn = conectar()
     cursor = conn.cursor()
@@ -3023,11 +3084,11 @@ def admin_count_usuarios_ativos_7d():
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT e.usuario_id)
         FROM analises a
         INNER JOIN empresas e ON e.id = a.empresa_id
-        WHERE date(a.data_analise) >= date('now', '-7 days')
+        WHERE {_sql_ts_gte_days_ago('a.data_analise', 7)}
         """
     )
     n = cursor.fetchone()[0]
@@ -3163,7 +3224,7 @@ def admin_crm_kpis():
     ym = datetime.now().strftime("%Y-%m")
 
     cursor.execute(
-        "SELECT COUNT(*) FROM leads WHERE date(criado_em) = date('now')"
+        f"SELECT COUNT(*) FROM leads WHERE {_sql_date_is_today('criado_em')}"
     )
     novos_hoje = int(cursor.fetchone()[0] or 0)
 
@@ -3185,20 +3246,20 @@ def admin_crm_kpis():
     demos_marcadas = int(cursor.fetchone()[0] or 0)
 
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM leads
         WHERE status = 'cliente_fechado'
-          AND strftime('%Y-%m', COALESCE(atualizado_em, criado_em)) = ?
+          AND {_sql_ym_equals('COALESCE(atualizado_em, criado_em)')}
         """,
         (ym,),
     )
     fechados_mes = int(cursor.fetchone()[0] or 0)
 
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM leads
         WHERE status = 'perdido'
-          AND strftime('%Y-%m', COALESCE(atualizado_em, criado_em)) = ?
+          AND {_sql_ym_equals('COALESCE(atualizado_em, criado_em)')}
         """,
         (ym,),
     )
@@ -3225,13 +3286,14 @@ def admin_series_cadastros_30_dias():
     """Contagem por dia (assinaturas.created_at) nos últimos 30 dias."""
     conn = conectar()
     cursor = conn.cursor()
+    day = _sql_day_expr("created_at")
     cursor.execute(
-        """
-        SELECT date(created_at) AS d, COUNT(*)
+        f"""
+        SELECT {day} AS d, COUNT(*)
         FROM assinaturas
         WHERE created_at IS NOT NULL
-          AND date(created_at) >= date('now', '-30 days')
-        GROUP BY date(created_at)
+          AND {_sql_ts_gte_days_ago('created_at', 30)}
+        GROUP BY {day}
         ORDER BY d
         """
     )
@@ -3243,13 +3305,14 @@ def admin_series_cadastros_30_dias():
 def admin_series_leads_30_dias():
     conn = conectar()
     cursor = conn.cursor()
+    day = _sql_day_expr("criado_em")
     cursor.execute(
-        """
-        SELECT date(criado_em) AS d, COUNT(*)
+        f"""
+        SELECT {day} AS d, COUNT(*)
         FROM leads
         WHERE criado_em IS NOT NULL
-          AND date(criado_em) >= date('now', '-30 days')
-        GROUP BY date(criado_em)
+          AND {_sql_ts_gte_days_ago('criado_em', 30)}
+        GROUP BY {day}
         ORDER BY d
         """
     )
@@ -3536,7 +3599,7 @@ def admin_fin_kpis_executivo():
         f"""
         SELECT COUNT(DISTINCT usuario_id) FROM checkout_transacoes
         WHERE {_checkout_pago_sql()}
-          AND strftime('%Y-%m', COALESCE(updated_at, created_at)) = ?
+          AND {_sql_ym_equals('COALESCE(updated_at, created_at)')}
         """,
         (ym,),
     )
@@ -3547,7 +3610,7 @@ def admin_fin_kpis_executivo():
         SELECT COUNT(*) FROM assinaturas a
         WHERE UPPER(COALESCE(a.plano, 'FREE')) = 'FREE'
           AND COALESCE(a.status, 'active') = 'active'
-          AND strftime('%Y-%m', COALESCE(a.updated_at, a.created_at)) = ?
+          AND {_sql_ym_equals('COALESCE(a.updated_at, a.created_at)')}
           AND EXISTS (
             SELECT 1 FROM checkout_transacoes c
             WHERE c.usuario_id = a.usuario_id
@@ -3559,10 +3622,10 @@ def admin_fin_kpis_executivo():
     downgrades_mes = int(cursor.fetchone()[0] or 0)
 
     cursor.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM assinaturas
         WHERE LOWER(COALESCE(status, '')) = 'suspended'
-          AND strftime('%Y-%m', COALESCE(updated_at, created_at)) = ?
+          AND {_sql_ym_equals('COALESCE(updated_at, created_at)')}
         """,
         (ym,),
     )
@@ -3634,13 +3697,14 @@ def admin_fin_checkout_volume_mensal_6m():
     """
     conn = conectar()
     cursor = conn.cursor()
+    ym_col = _sql_ym_expr("COALESCE(updated_at, created_at)")
     cursor.execute(
         f"""
-        SELECT strftime('%Y-%m', COALESCE(updated_at, created_at)) AS ym,
+        SELECT {ym_col} AS ym,
                SUM(COALESCE(valor, 0))
         FROM checkout_transacoes
         WHERE {_checkout_pago_sql()}
-          AND date(COALESCE(updated_at, created_at)) >= date('now', '-200 days')
+          AND {_sql_ts_gte_days_ago('COALESCE(updated_at, created_at)', 200)}
         GROUP BY ym
         ORDER BY ym
         """
@@ -3661,7 +3725,7 @@ def admin_fin_ultimos_checkouts_pagos(limit=15):
         FROM checkout_transacoes c
         INNER JOIN usuarios u ON u.id = c.usuario_id
         WHERE {_checkout_pago_sql('c')}
-        ORDER BY datetime(COALESCE(c.updated_at, c.created_at)) DESC
+        ORDER BY {_sql_order_ts_desc('COALESCE(c.updated_at, c.created_at)')}
         LIMIT ?
         """,
         (int(limit),),
@@ -3681,7 +3745,7 @@ def admin_fin_ultimos_suspensos(limit=15):
         FROM assinaturas a
         INNER JOIN usuarios u ON u.id = a.usuario_id
         WHERE LOWER(COALESCE(a.status, '')) = 'suspended'
-        ORDER BY datetime(COALESCE(a.updated_at, a.created_at)) DESC
+        ORDER BY {_sql_order_ts_desc('COALESCE(a.updated_at, a.created_at)')}
         LIMIT ?
         """,
         (int(limit),),
@@ -3701,17 +3765,16 @@ def admin_alertas_automaticos():
     c = conn.cursor()
 
     c.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM leads
-        WHERE date(criado_em) >= date('now', '-7 days')
+        WHERE {_sql_ts_gte_days_ago('criado_em', 7)}
         """
     )
     leads_curr = int(c.fetchone()[0] or 0)
     c.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM leads
-        WHERE date(criado_em) >= date('now', '-14 days')
-          AND date(criado_em) < date('now', '-7 days')
+        WHERE {_sql_ts_in_range_days_ago('criado_em', 14, 7)}
         """
     )
     leads_prev = int(c.fetchone()[0] or 0)
@@ -3743,20 +3806,20 @@ def admin_alertas_automaticos():
             }
         )
 
+    ts_sub = "COALESCE(updated_at, created_at)"
     c.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM assinaturas
         WHERE LOWER(COALESCE(status, '')) = 'suspended'
-          AND date(COALESCE(updated_at, created_at)) >= date('now', '-7 days')
+          AND {_sql_ts_gte_days_ago(ts_sub, 7)}
         """
     )
     susp_curr = int(c.fetchone()[0] or 0)
     c.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM assinaturas
         WHERE LOWER(COALESCE(status, '')) = 'suspended'
-          AND date(COALESCE(updated_at, created_at)) >= date('now', '-14 days')
-          AND date(COALESCE(updated_at, created_at)) < date('now', '-7 days')
+          AND {_sql_ts_in_range_days_ago(ts_sub, 14, 7)}
         """
     )
     susp_prev = int(c.fetchone()[0] or 0)
@@ -3789,7 +3852,7 @@ def admin_alertas_automaticos():
         f"""
         SELECT COALESCE(SUM(valor), 0) FROM checkout_transacoes
         WHERE {_checkout_pago_sql()}
-          AND date(COALESCE(updated_at, created_at)) >= date('now', '-30 days')
+          AND {_sql_ts_gte_days_ago(ts_sub, 30)}
         """
     )
     rev_curr = float(c.fetchone()[0] or 0)
@@ -3797,8 +3860,7 @@ def admin_alertas_automaticos():
         f"""
         SELECT COALESCE(SUM(valor), 0) FROM checkout_transacoes
         WHERE {_checkout_pago_sql()}
-          AND date(COALESCE(updated_at, created_at)) >= date('now', '-60 days')
-          AND date(COALESCE(updated_at, created_at)) < date('now', '-30 days')
+          AND {_sql_ts_in_range_days_ago(ts_sub, 60, 30)}
         """
     )
     rev_prev = float(c.fetchone()[0] or 0)
@@ -3829,7 +3891,7 @@ def admin_alertas_automaticos():
         )
 
     c.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT a.usuario_id)
         FROM assinaturas a
         WHERE COALESCE(a.status, 'active') = 'active'
@@ -3837,7 +3899,7 @@ def admin_alertas_automaticos():
           AND NOT EXISTS (
             SELECT 1 FROM analises an
             INNER JOIN empresas e ON e.id = an.empresa_id AND e.usuario_id = a.usuario_id
-            WHERE date(an.data_analise) >= date('now', '-14 days')
+            WHERE {_sql_ts_gte_days_ago('an.data_analise', 14)}
           )
         """
     )

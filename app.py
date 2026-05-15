@@ -17,7 +17,7 @@ from banco import (
     registrar_falha_login,
     salvar_analise,
     salvar_feedback_resultado_analise,
-    usuario_eh_admin,
+    is_usuario_admin,
     usuario_pode_acessar_plataforma,
     validar_token_convite_primeiro_acesso,
     verificar_rate_limit_login,
@@ -512,6 +512,8 @@ if not usuario_pode_acessar_plataforma(usuario_id):
     del st.session_state["user_id"]
     st.rerun()
 
+usuario_e_admin = is_usuario_admin(usuario_id)
+
 sessao = get_sessao()
 plano = get_plano_usuario(usuario_id)
 st.session_state.setdefault("user_nome", obter_email_usuario(usuario_id) or "Usuário")
@@ -554,13 +556,13 @@ st.session_state.setdefault("pagina_ativa", "Consultoria")
 nav_opts = ["Consultoria", "Gestão de Equipe", "Integrações", "Dashboard Corporativo"]
 # Bootstrap Icons (sem prefixo bi-) — alinhados ao streamlit-option-menu
 icons_nav = ["kanban", "people", "plug", "view-stacked"]
-if st.session_state.get("pagina_ativa") not in nav_opts + ["SuperAdminPanel"]:
+paginas_validas = nav_opts + (["SuperAdminPanel"] if usuario_e_admin else [])
+if st.session_state.get("pagina_ativa") not in paginas_validas:
     st.session_state["pagina_ativa"] = "Consultoria"
-is_super_admin = usuario_eh_admin(usuario_id)
 
 st.sidebar.divider()
 with st.sidebar:
-    if st.session_state.get("pagina_ativa") == "SuperAdminPanel":
+    if usuario_e_admin and st.session_state.get("pagina_ativa") == "SuperAdminPanel":
         st.info("Modo Super Admin ativo")
         if st.button("Voltar para operação", key="superadmin_back"):
             st.session_state["pagina_ativa"] = "Consultoria"
@@ -607,10 +609,10 @@ with st.sidebar:
         )
         st.session_state["pagina_ativa"] = area_principal
 
-    if is_super_admin:
+    if usuario_e_admin:
         st.divider()
         st.markdown("### Super Admin")
-        st.caption("Operações globais e auditoria.")
+        st.caption("Gestão global da plataforma.")
         if st.button("Painel de Controle Global", key="btn_superadmin_panel", icon="🛡️"):
             st.session_state["pagina_ativa"] = "SuperAdminPanel"
             st.rerun()
@@ -681,7 +683,7 @@ if cadastrar_clicked:
     st.rerun()
 
 if area_principal == "SuperAdminPanel":
-    if is_super_admin:
+    if usuario_e_admin:
         render_superadmin_panel(user_id=usuario_id, email=obter_email_usuario(usuario_id))
     else:
         registrar_admin_audit(
