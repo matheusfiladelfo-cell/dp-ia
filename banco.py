@@ -1189,7 +1189,7 @@ def criar_usuario(email, senha, nome=None):
     conn = conectar()
     cursor = conn.cursor()
 
-    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+    senha_hash = bcrypt.hashpw(senha.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     nome_val = (nome or "").strip() or None
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1289,7 +1289,7 @@ def atualizar_senha_usuario(usuario_id, nova_senha: str):
     senha = str(nova_senha or "")
     if len(senha) < 8:
         raise ValueError("A senha deve ter pelo menos 8 caracteres.")
-    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+    senha_hash = bcrypt.hashpw(senha.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
@@ -1686,7 +1686,7 @@ def listar_historico_status_usuario(limit=100) -> list[dict]:
     cursor = conn.cursor()
     lim = max(1, int(limit or 100))
     cursor.execute(
-        """
+        f"""
         SELECT
             h.id,
             h.usuario_id,
@@ -1698,7 +1698,7 @@ def listar_historico_status_usuario(limit=100) -> list[dict]:
             COALESCE(h.motivo, '') AS motivo
         FROM historico_status_usuario h
         LEFT JOIN usuarios u ON u.id = h.usuario_id
-        ORDER BY datetime(h.alterado_em) DESC, h.id DESC
+        ORDER BY {_sql_order_ts_desc("h.alterado_em")}, h.id DESC
         LIMIT ?
         """,
         (lim,),
@@ -1725,7 +1725,7 @@ def listar_historico_planos_assinatura(limit=100) -> list[dict]:
     cursor = conn.cursor()
     lim = max(1, int(limit or 100))
     cursor.execute(
-        """
+        f"""
         SELECT
             h.id,
             h.assinatura_id,
@@ -1739,7 +1739,7 @@ def listar_historico_planos_assinatura(limit=100) -> list[dict]:
             COALESCE(h.alterado_por, '') AS alterado_por
         FROM historico_planos_assinatura h
         LEFT JOIN usuarios u ON u.id = h.usuario_id
-        ORDER BY datetime(h.alterado_em) DESC, h.id DESC
+        ORDER BY {_sql_order_ts_desc("h.alterado_em")}, h.id DESC
         LIMIT ?
         """,
         (lim,),
@@ -1768,7 +1768,7 @@ def listar_eventos_produto(limit=100) -> list[dict]:
     cursor = conn.cursor()
     lim = max(1, int(limit or 100))
     cursor.execute(
-        """
+        f"""
         SELECT
             e.id,
             e.usuario_id,
@@ -1777,11 +1777,11 @@ def listar_eventos_produto(limit=100) -> list[dict]:
             COALESCE(emp.nome, '') AS nome_empresa,
             COALESCE(e.nome_evento, '') AS nome_evento,
             COALESCE(e.timestamp_evento, '') AS timestamp_evento,
-            COALESCE(e.metadados_json, '{}') AS metadados_json
+            COALESCE(e.metadados_json, '{{}}') AS metadados_json
         FROM eventos_produto e
         LEFT JOIN usuarios u ON u.id = e.usuario_id
         LEFT JOIN empresas emp ON emp.id = e.empresa_id
-        ORDER BY datetime(e.timestamp_evento) DESC, e.id DESC
+        ORDER BY {_sql_order_ts_desc("e.timestamp_evento")}, e.id DESC
         LIMIT ?
         """,
         (lim,),
@@ -2065,11 +2065,11 @@ def listar_convites_primeiro_acesso_empresa(empresa_id) -> list[dict]:
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT c.id, c.email, c.nome_convidado, c.perfil, c.status, c.criado_em, c.expira_em, c.aceito_em
         FROM empresa_convites_primeiro_acesso c
         WHERE c.empresa_id = ?
-        ORDER BY datetime(c.criado_em) DESC, c.id DESC
+        ORDER BY {_sql_order_ts_desc("c.criado_em")}, c.id DESC
         """,
         (int(empresa_id),),
     )
@@ -2802,11 +2802,11 @@ def obter_ultima_auditoria_risco_massa(empresa_id) -> dict | None:
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT id, executada_em, executada_por_usuario_id, resultado_json
         FROM empresa_auditorias_risco
         WHERE empresa_id = ?
-        ORDER BY datetime(executada_em) DESC, id DESC
+        ORDER BY {_sql_order_ts_desc("executada_em")}, id DESC
         LIMIT 1
         """,
         (int(empresa_id),),
@@ -2886,13 +2886,13 @@ def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
     cursor = conn.cursor()
     if criado_por_usuario_id is not None:
         cursor.execute(
-            """
+            f"""
             SELECT tipo_caso, risco, data_analise
             FROM analises
             WHERE empresa_id = ?
               AND COALESCE(criado_por_usuario_id, -1) = ?
               AND COALESCE(tipo_caso, '') != ?
-            ORDER BY datetime(data_analise) DESC
+            ORDER BY {_sql_order_ts_desc("data_analise")}
             LIMIT ?
             """,
             (
@@ -2904,12 +2904,12 @@ def obter_historico_empresa(empresa_id, limite=20, criado_por_usuario_id=None):
         )
     else:
         cursor.execute(
-            """
+            f"""
             SELECT tipo_caso, risco, data_analise
             FROM analises
             WHERE empresa_id = ?
               AND COALESCE(tipo_caso, '') != ?
-            ORDER BY datetime(data_analise) DESC
+            ORDER BY {_sql_order_ts_desc("data_analise")}
             LIMIT ?
             """,
             (empresa_id, TIPO_ANALISE_STUB_VALIDACAO_FATOS, int(limite)),
@@ -3147,11 +3147,11 @@ def admin_ultimos_leads(limit=20):
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
-        """
+        f"""
         SELECT id, nome, empresa, email, whatsapp, plano_interesse, criado_em,
                COALESCE(status, 'novo')
         FROM leads
-        ORDER BY datetime(criado_em) DESC
+        ORDER BY {_sql_order_ts_desc("criado_em")}
         LIMIT ?
         """,
         (int(limit),),
@@ -3170,15 +3170,14 @@ def admin_crm_listar_leads(filtro_status: str | None = None):
                COALESCE(status, 'novo'), COALESCE(observacoes, '')
         FROM leads
     """
+    ordem = _sql_order_ts_desc("COALESCE(atualizado_em, criado_em)")
     if filtro_status and filtro_status in LEAD_CRM_STATUSES:
         cursor.execute(
-            base + " WHERE COALESCE(status, 'novo') = ? ORDER BY datetime(COALESCE(atualizado_em, criado_em)) DESC",
+            base + f" WHERE COALESCE(status, 'novo') = ? ORDER BY {ordem}",
             (filtro_status,),
         )
     else:
-        cursor.execute(
-            base + " ORDER BY datetime(COALESCE(atualizado_em, criado_em)) DESC"
-        )
+        cursor.execute(base + f" ORDER BY {ordem}")
     rows = cursor.fetchall()
     conn.close()
     return rows
