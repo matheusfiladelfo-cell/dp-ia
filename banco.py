@@ -1867,7 +1867,7 @@ def listar_membros_empresa(empresa_id):
               LIMIT 1
           )
         WHERE m.empresa_id = ?
-        ORDER BY nome_exibicao COLLATE NOCASE ASC
+        ORDER BY LOWER(nome_exibicao) ASC
         """,
         (int(empresa_id),),
     )
@@ -2601,7 +2601,7 @@ def listar_fatos_validados(analise_id):
         SELECT nome_fato, valor_fato, fonte, validado_em, validado_por_usuario_id
         FROM analises_fatos_validados
         WHERE analise_id = ?
-        ORDER BY nome_fato COLLATE NOCASE ASC
+        ORDER BY LOWER(nome_fato) ASC
         """,
         (int(analise_id),),
     )
@@ -2769,7 +2769,7 @@ def listar_funcionarios_integracao(empresa_id) -> list[dict]:
                cargo, salario_bruto, tipo_contrato, ultima_atualizacao
         FROM empresa_funcionarios_integracao
         WHERE empresa_id = ?
-        ORDER BY nome_completo COLLATE NOCASE ASC
+        ORDER BY LOWER(nome_completo) ASC
         """,
         (int(empresa_id),),
     )

@@ -11,6 +11,7 @@ from banco import (
     concluir_convite_primeiro_acesso,
     criar_tabelas,
     obter_email_usuario,
+    obter_historico_empresa,
     obter_uso_usuario,
     incrementar_uso,
     registrar_admin_audit,
@@ -102,6 +103,21 @@ from ui.onboarding_views import (
 )
 
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+
+NAV_PRINCIPAL = ["Nova Análise", "Score Engine IA", "Buscar Casos", "Biblioteca"]
+ICONS_NAV = ["pencil-square", "robot", "search", "journal-bookmark"]
+NAV_SECUNDARIA = ["Gestão de Equipe", "Integrações"]
+_PAGINA_LEGADA = {
+    "Consultoria": "Nova Análise",
+    "Dashboard Corporativo": "Biblioteca",
+}
+
+
+def _normalizar_pagina_ativa(pagina: str | None) -> str:
+    p = str(pagina or "").strip()
+    if p in _PAGINA_LEGADA:
+        return _PAGINA_LEGADA[p]
+    return p or "Nova Análise"
 
 
 def _query_param_scalar(key: str) -> str:
@@ -557,74 +573,100 @@ if empresa_id is not None and perfil_usuario is None:
 
 render_resumo_permissoes(perfil_usuario)
 
-st.session_state.setdefault("pagina_ativa", "Consultoria")
-nav_opts = ["Consultoria", "Gestão de Equipe", "Integrações", "Dashboard Corporativo"]
-# Bootstrap Icons (sem prefixo bi-) — alinhados ao streamlit-option-menu
-icons_nav = ["kanban", "people", "plug", "view-stacked"]
-paginas_validas = nav_opts + (["SuperAdminPanel"] if usuario_e_admin else [])
-if st.session_state.get("pagina_ativa") not in paginas_validas:
-    st.session_state["pagina_ativa"] = "Consultoria"
+st.session_state.setdefault("pagina_ativa", "Nova Análise")
+st.session_state["pagina_ativa"] = _normalizar_pagina_ativa(st.session_state.get("pagina_ativa"))
 
-st.sidebar.divider()
+nav_opts = list(NAV_PRINCIPAL)
+paginas_validas = nav_opts + NAV_SECUNDARIA + (
+    ["SuperAdminPanel"] if usuario_e_admin else []
+)
+if st.session_state.get("pagina_ativa") not in paginas_validas:
+    st.session_state["pagina_ativa"] = "Nova Análise"
+
+_MP_NAV_MENU_STYLES = {
+    "container": {
+        "padding": "0.25rem 0 0.5rem 0!important",
+        "background-color": "transparent",
+    },
+    "icon": {
+        "color": "#94a3b8",
+        "font-size": "1.05rem",
+        "opacity": "0.88",
+    },
+    "nav-link": {
+        "font-size": "0.92rem",
+        "text-align": "left",
+        "margin": "0.2rem 0",
+        "padding": "0.55rem 0.75rem",
+        "border-radius": "12px",
+        "color": "#cbd5e1",
+        "background-color": "transparent",
+        "--hover-color": "rgba(37, 99, 235, 0.14)",
+    },
+    "nav-link-selected": {
+        "background-color": "rgba(37, 99, 235, 0.22)",
+        "color": "#f8fafc",
+        "font-weight": "600",
+        "border": "none",
+        "border-radius": "12px",
+        "padding": "0.55rem 0.75rem",
+        "box-shadow": "inset 0 0 0 1px rgba(96, 165, 250, 0.22)",
+    },
+}
+
 with st.sidebar:
     if usuario_e_admin and st.session_state.get("pagina_ativa") == "SuperAdminPanel":
         st.info("Modo Super Admin ativo")
         if st.button("Voltar para operação", key="superadmin_back"):
-            st.session_state["pagina_ativa"] = "Consultoria"
+            st.session_state["pagina_ativa"] = "Nova Análise"
             st.rerun()
     else:
-        st.markdown("### Navegação")
-        st.caption("Consultoria, equipe, integrações e painéis.")
-        st.divider()
+        st.markdown(
+            '<p class="mp-sidebar-brand">M&amp;P Consultoria</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Inteligência trabalhista para decisões de RH.")
+        idx_nav = (
+            nav_opts.index(st.session_state["pagina_ativa"])
+            if st.session_state["pagina_ativa"] in nav_opts
+            else 0
+        )
         area_principal = option_menu(
             menu_title=None,
             options=nav_opts,
-            icons=icons_nav,
-            menu_icon="layers",
-            default_index=nav_opts.index(st.session_state["pagina_ativa"]),
+            icons=ICONS_NAV,
+            menu_icon="cast",
+            default_index=idx_nav,
             key="menu_navegacao_mp",
-            styles={
-                "container": {
-                    "padding": "0.15rem 0 0.35rem 0!important",
-                    "background-color": "transparent",
-                },
-                "icon": {
-                    "color": "#60a5fa",
-                    "font-size": "1.08rem",
-                    "opacity": "0.95",
-                },
-                "nav-link": {
-                    "font-size": "0.94rem",
-                    "text-align": "left",
-                    "margin": "0.12rem 0",
-                    "padding": "0.5rem 0.65rem",
-                    "border-radius": "10px",
-                    "color": "#cbd5e1",
-                    "--hover-color": "rgba(30, 41, 59, 0.85)",
-                },
-                "nav-link-selected": {
-                    "background-color": "rgba(37, 99, 235, 0.28)",
-                    "color": "#fffbeb",
-                    "font-weight": "600",
-                    "border-left": "3px solid #fbbf24",
-                    "padding-left": "0.55rem",
-                    "box-shadow": "inset 0 0 0 1px rgba(251, 191, 36, 0.12)",
-                },
-            },
+            styles=_MP_NAV_MENU_STYLES,
         )
         st.session_state["pagina_ativa"] = area_principal
 
+        if pode_acessar_gestao_equipe(perfil_usuario) or pode_gerenciar_integracoes_payroll(
+            perfil_usuario
+        ):
+            st.markdown('<p class="mp-sidebar-section-label">Administração</p>', unsafe_allow_html=True)
+            cols_nav_sec = st.columns(2)
+            if pode_acessar_gestao_equipe(perfil_usuario):
+                with cols_nav_sec[0]:
+                    if st.button("Equipe", key="nav_sec_equipe", use_container_width=True):
+                        st.session_state["pagina_ativa"] = "Gestão de Equipe"
+                        st.rerun()
+            if pode_gerenciar_integracoes_payroll(perfil_usuario):
+                with cols_nav_sec[1]:
+                    if st.button(
+                        "Integrações", key="nav_sec_integracoes", use_container_width=True
+                    ):
+                        st.session_state["pagina_ativa"] = "Integrações"
+                        st.rerun()
+
     if usuario_e_admin:
-        st.divider()
-        st.markdown("### Super Admin")
-        st.caption("Gestão global da plataforma.")
-        if st.button("Painel de Controle Global", key="btn_superadmin_panel", icon="🛡️"):
+        st.caption("Super Admin")
+        if st.button("Painel global", key="btn_superadmin_panel", icon="🛡️"):
             st.session_state["pagina_ativa"] = "SuperAdminPanel"
             st.rerun()
 
-area_principal = st.session_state.get("pagina_ativa", "Consultoria")
-
-st.sidebar.divider()
+area_principal = st.session_state.get("pagina_ativa", "Nova Análise")
 
 alertas_prazo = verificar_prazos_pendentes(usuario_id, perfil_usuario)
 if alertas_prazo:
@@ -707,7 +749,7 @@ if area_principal == "SuperAdminPanel":
 # =========================
 # INSIGHTS (MANTIDO)
 # =========================
-if empresa_id and area_principal == "Consultoria":
+if empresa_id and area_principal in ("Nova Análise", "Score Engine IA"):
     filtro_insights = usuario_id if perfil_usuario == "colaborador" else None
     insights = gerar_insights_empresa_uc(empresa_id, criado_por_usuario_id=filtro_insights)
     render_insights_empresa(insights)
@@ -748,7 +790,7 @@ if area_principal == "Integrações":
     render_footer()
     st.stop()
 
-if area_principal == "Dashboard Corporativo":
+if area_principal == "Biblioteca":
     if not pode_ver_dashboard_corporativo(perfil_usuario):
         st.error("Acesso negado.")
         st.stop()
@@ -762,10 +804,53 @@ if area_principal == "Dashboard Corporativo":
     st.stop()
 
 
+if area_principal == "Buscar Casos":
+    render_section_title("Buscar Casos")
+    st.caption("Casos em andamento e histórico de análises da empresa selecionada.")
+    if not empresa_id:
+        st.warning("Selecione uma empresa na barra lateral para buscar casos.")
+        render_footer()
+        st.stop()
+
+    busca = st.text_input("Filtrar por empresa, e-mail ou tipo de caso", key="buscar_casos_filtro")
+    busca_l = busca.strip().lower()
+    casos = st.session_state.get("casos_ativos_notificacao") or []
+    if busca_l:
+        casos = [
+            c
+            for c in casos
+            if busca_l in str(c.get("empresa_nome", "")).lower()
+            or busca_l in str(c.get("usuario_email", "")).lower()
+            or busca_l in str(c.get("case_id", "")).lower()
+        ]
+
+    if casos:
+        st.markdown("#### Casos ativos na sessão")
+        for caso in casos:
+            rotulo = f"{caso.get('empresa_nome', 'Empresa')} — {caso.get('case_id', '')}"
+            if st.button(rotulo, key=f"abrir_caso_{caso.get('case_id')}", use_container_width=True):
+                st.session_state["caso_selecionado_para_exibicao"] = caso.get("case_id")
+                st.session_state["pagina_ativa"] = "Nova Análise"
+                st.rerun()
+    else:
+        st.info("Nenhum caso ativo na sessão. Inicie uma nova análise para gerar um parecer.")
+
+    filtro_hist = usuario_id if perfil_usuario == "colaborador" else None
+    hist = obter_historico_empresa(empresa_id, limite=30, criado_por_usuario_id=filtro_hist)
+    st.markdown("#### Histórico recente")
+    st.write(hist.get("resumo") or "Sem análises registradas.")
+    tipos = hist.get("tipos_frequentes") or []
+    if tipos:
+        st.caption("Tipos frequentes: " + ", ".join(str(t) for t in tipos[:5]))
+    render_footer()
+    st.stop()
+
+
 # =========================
-# CONVERSA ASSISTIDA (FLUXO PRINCIPAL)
+# NOVA ANÁLISE / SCORE ENGINE (FLUXO PRINCIPAL)
 # =========================
-render_section_title("Conversa Assistida")
+_titulo_fluxo = "Score Engine IA" if area_principal == "Score Engine IA" else "Nova Análise"
+render_section_title(_titulo_fluxo)
 render_chat_title()
 render_chat_document_upload(sessao, usuario_id=usuario_id, empresa_id=empresa_id)
 user_input = render_chat_input()

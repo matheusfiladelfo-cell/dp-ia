@@ -47,7 +47,7 @@ def _processar_clique_tabela_casos(
         if now and not antes and case_ids[i]:
             st.session_state["caso_selecionado_para_exibicao"] = case_ids[i]
             st.session_state["controlador_abas_relatorio"] = "Painel de Controle"
-            st.session_state["area_principal_mp"] = "Consultoria"
+            st.session_state["pagina_ativa"] = "Nova Análise"
             st.session_state.pop(prev_key, None)
             st.session_state.pop(sig_key, None)
             st.rerun()
@@ -162,7 +162,7 @@ def _render_dashboard_visao_geral(
         _processar_clique_tabela_casos(edited, case_ids, sig_tabela)
 
         st.caption(
-            "Marque **Ver detalhes** na linha do caso para ir ao Painel de Controle (você será levado à área Consultoria)."
+            "Marque **Ver detalhes** na linha do caso para ir ao Painel de Controle (você será levado à Nova Análise)."
         )
     else:
         st.info(
