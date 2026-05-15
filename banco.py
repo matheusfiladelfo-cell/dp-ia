@@ -517,6 +517,14 @@ def _bootstrap_admin_master():
         """,
         (master_lower,),
     )
+    cursor.execute(
+        """
+        UPDATE usuarios
+        SET is_admin = 1
+        WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
+        """,
+        (raw_email,),
+    )
     conn.commit()
     conn.close()
 
